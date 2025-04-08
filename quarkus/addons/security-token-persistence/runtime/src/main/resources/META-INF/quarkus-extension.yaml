@@ -1,0 +1,17 @@
+name: Kie Security Token Persistence Add-on
+description: Add-On that enables the persistence of incoming tokens
+metadata:
+  keywords:
+    - KIE
+    - security
+    - persistence
+    - token
+  guide: https://quarkus.io/guides/kie
+  categories:
+    - "business-automation"
+    - "cloud"
+    - "security"
+    - "persistence"
+  status: "stable"
+  config:
+    - "quarkus.sonataflow.security.token-persistence"
