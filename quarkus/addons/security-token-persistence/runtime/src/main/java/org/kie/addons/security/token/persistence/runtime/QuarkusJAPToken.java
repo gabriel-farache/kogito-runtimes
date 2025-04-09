@@ -1,0 +1,48 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+package org.kie.addons.security.token.persistence.runtime;
+
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import org.kie.security.token.persistence.JPATokens;
+import org.kie.security.token.persistence.repository.TokenRepository;
+
+@ApplicationScoped
+public class QuarkusJAPToken extends JPATokens {
+
+    /*@Inject
+    public PostgresqlTokensFactory(PgPool client,
+                                   @ConfigProperty(name = "kogito.persistence.query.timeout.millis", defaultValue = "10000") Long queryTimeout,
+                                   @ConfigProperty(name = "kogito.persistence.optimistic.lock", defaultValue = "false") Boolean lock) {
+        super(client, queryTimeout, lock);
+    }
+
+    protected PostgresqlTokensFactory() {
+        super();
+    }*/
+    QuarkusJAPToken() {
+        super(null);
+    }
+
+    @Inject
+    public QuarkusJAPToken(TokenRepository tokenRepository) {
+        super(tokenRepository);
+    }
+
+}

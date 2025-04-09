@@ -16,12 +16,31 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.kie.addons.security.token.persistence.runtime;
+package org.kie.kogito.security.token.persistence;
 
-import jakarta.enterprise.inject.spi.CDI;
+import org.kie.kogito.process.ProcessInstance;
 
-public class RequestRecorder {
-    public RequestRecorder() {
-        CDI.current().select(RequestLoggingFilter.class).get();
+import java.util.List;
+import java.util.Optional;
+
+public interface Tokens {
+
+    boolean exists(String id);
+
+    void create(String id, Tokens token);
+
+    void update(String id, Tokens token);
+
+    void remove(String id);
+
+    default boolean lock() {
+        return false;
     }
+
+    Optional<Token> findById(String id);
+
+    Optional<List<Token>> findByProcessInstanceId(String processInstanceId);
+
+    Optional<List<Token>> findByProcessInstance(ProcessInstance processInstance);
+
 }
