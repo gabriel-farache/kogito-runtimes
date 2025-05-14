@@ -26,6 +26,10 @@ import jakarta.enterprise.context.RequestScoped;
 import jakarta.enterprise.inject.Alternative;
 import jakarta.enterprise.inject.Specializes;
 import jakarta.ws.rs.core.HttpHeaders;
+import jakarta.enterprise.context.Dependent;
+import jakarta.enterprise.inject.Alternative;
+import jakarta.enterprise.inject.Specializes;
+import jakarta.ws.rs.client.ClientRequestContext;
 
 import org.eclipse.microprofile.config.ConfigProvider;
 import org.slf4j.Logger;
@@ -39,6 +43,9 @@ import io.quarkus.oidc.client.OidcClientException;
 import io.quarkus.oidc.client.OidcClients;
 import io.quarkus.oidc.client.Tokens;
 import io.quarkus.runtime.configuration.ConfigurationException;
+
+
+
 
 import static io.quarkiverse.openapi.generator.providers.AbstractAuthProvider.getHeaderName;
 
