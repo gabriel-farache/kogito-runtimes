@@ -45,8 +45,14 @@ public final class SonataFlowOtelAttributes {
     public static final AttributeKey<String> SONATAFLOW_PROCESS_INSTANCE_STATE =
             AttributeKey.stringKey("sonataflow.process.instance.state");
 
+    public static final AttributeKey<String> SONATAFLOW_PROCESS_INSTANCE_NODE =
+            AttributeKey.stringKey("sonataflow.process.instance.node");
+
     public static final AttributeKey<String> SONATAFLOW_WORKFLOW_STATE =
             AttributeKey.stringKey("sonataflow.workflow.state");
+
+    public static final AttributeKey<String> SONATAFLOW_PARENT_PROCESS_INSTANCE_ID =
+            AttributeKey.stringKey("sonataflow.parent.process.instance.id");
 
     public static final AttributeKey<String> SONATAFLOW_TRANSACTION_ID =
             AttributeKey.stringKey("sonataflow.transaction.id");
@@ -102,8 +108,8 @@ public final class SonataFlowOtelAttributes {
         private Events() {
         }
 
-        public static final String STATE_STARTED = "state.started";
-        public static final String STATE_COMPLETED = "state.completed";
+        public static final String NODE_STARTED = "node.started";
+        public static final String NODE_COMPLETED = "node.completed";
         public static final String PROCESS_INSTANCE_START = "process.instance.start";
         public static final String PROCESS_INSTANCE_COMPLETE = "process.instance.complete";
         public static final String PROCESS_INSTANCE_ERROR = "process.instance.error";
@@ -121,6 +127,15 @@ public final class SonataFlowOtelAttributes {
         public static String createProcessSpanName(String processId) {
             return SONATAFLOW_PROCESS_PREFIX + processId + SONATAFLOW_PROCESS_SUFFIX;
         }
+    }
+
+    // Node Patterns - Standard node name patterns for identification
+    public static final class NodePatterns {
+        private NodePatterns() {
+        }
+
+        public static final String START = "Start";
+        public static final String END = "End";
     }
 
     // Tracker Attribute Helper
@@ -206,8 +221,8 @@ public final class SonataFlowOtelAttributes {
         private EventDescriptions() {
         }
 
-        public static final String STATE_STARTED_PREFIX = "State execution started: ";
-        public static final String STATE_COMPLETED_PREFIX = "State execution completed: ";
+        public static final String NODE_STARTED_PREFIX = "Node execution started: ";
+        public static final String NODE_COMPLETED_PREFIX = "Node execution completed: ";
     }
 
     // Variable Names - Process variable names

@@ -102,10 +102,16 @@ public class HeaderContextExtractor {
             String headerValue = entry.getValue();
 
             if (Headers.TRANSACTION_ID.equals(headerName)) {
-                context.put(RequestProperties.TRANSACTION_ID, headerValue);
+                String sanitized = sanitizeHeaderValue(headerValue);
+                if (sanitized != null) {
+                    context.put(RequestProperties.TRANSACTION_ID, sanitized);
+                }
             } else if (headerName.startsWith(Headers.TRACKER_PREFIX)) {
                 String trackerKey = headerName.substring(Headers.TRACKER_PREFIX.length()).toLowerCase().replace('-', '.');
-                context.put(RequestProperties.TRACKER_PREFIX + trackerKey, headerValue);
+                String sanitized = sanitizeHeaderValue(headerValue);
+                if (sanitized != null) {
+                    context.put(RequestProperties.TRACKER_PREFIX + trackerKey, sanitized);
+                }
             }
         }
 

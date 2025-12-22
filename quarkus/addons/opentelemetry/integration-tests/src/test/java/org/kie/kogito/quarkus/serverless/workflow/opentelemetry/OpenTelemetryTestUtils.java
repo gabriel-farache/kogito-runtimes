@@ -221,9 +221,9 @@ public final class OpenTelemetryTestUtils {
         spans.stream().limit(3).forEach(span -> {
             String spanTxnId = span.getAttributes().get(SONATAFLOW_TRANSACTION_ID);
             String spanProcessId = span.getAttributes().get(SONATAFLOW_PROCESS_ID);
-            String spanStateName = span.getAttributes().get(SONATAFLOW_WORKFLOW_STATE);
-            LOGGER.info("Sample span: {} | Process: {} | State: {} | TxnId: '{}'",
-                    span.getName(), spanProcessId, spanStateName, spanTxnId);
+            String spanNodeName = span.getAttributes().get(SONATAFLOW_PROCESS_INSTANCE_NODE);
+            LOGGER.info("Sample span: {} | Process: {} | Node: {} | TxnId: '{}'",
+                    span.getName(), spanProcessId, spanNodeName, spanTxnId);
         });
 
         List<SpanData> filteredSpans = spans.stream()
@@ -288,16 +288,50 @@ public final class OpenTelemetryTestUtils {
     }
 
     /**
-     * Extracts unique state names from spans.
+     * Extracts unique node names from spans.
      *
      * @param spans list of spans
-     * @return set of unique state names
+     * @return set of unique node names
      */
-    public static Set<String> extractStateNames(List<SpanData> spans) {
+    public static Set<String> extractNodeNames(List<SpanData> spans) {
         return spans.stream()
-                .map(span -> span.getAttributes().get(SONATAFLOW_WORKFLOW_STATE))
-                .filter(stateName -> stateName != null)
+                .map(span -> span.getAttributes().get(SONATAFLOW_PROCESS_INSTANCE_NODE))
+                .filter(nodeName -> nodeName != null)
                 .collect(Collectors.toSet());
+    }
+
+    /**
+     * Finds a span by node name.
+     *
+     * @param spans list of spans to search
+     * @param nodeName the node name to find
+     * @return the span with the specified node name
+     * @throws AssertionError if span is not found
+     */
+    public static SpanData findSpanByNodeName(List<SpanData> spans, String nodeName) {
+        return spans.stream()
+                .filter(span -> {
+                    String spanNodeName = span.getAttributes().get(SONATAFLOW_PROCESS_INSTANCE_NODE);
+                    return nodeName.equals(spanNodeName);
+                })
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Span with node name '" + nodeName + "' not found"));
+    }
+
+    /**
+     * Validates mandatory span attributes for node-based spans.
+     *
+     * @param span the span to validate
+     * @param expectedProcessId the expected process ID
+     */
+    public static void validateMandatorySpanAttributes(SpanData span, String expectedProcessId) {
+        assertThat(span.getAttributes().get(SONATAFLOW_PROCESS_INSTANCE_ID)).isNotNull();
+        assertThat(span.getAttributes().get(SONATAFLOW_PROCESS_ID)).isEqualTo(expectedProcessId);
+        assertThat(span.getAttributes().get(SONATAFLOW_PROCESS_VERSION)).isEqualTo("1.0");
+        assertThat(span.getAttributes().get(SONATAFLOW_PROCESS_INSTANCE_STATE)).isNotNull();
+        assertThat(span.getAttributes().get(SERVICE_NAME)).isNotNull();
+        assertThat(span.getAttributes().get(SERVICE_VERSION)).isNotNull();
+        assertThat(span.getAttributes().get(SONATAFLOW_PROCESS_INSTANCE_NODE)).isNotNull();
     }
 
     /**
@@ -332,6 +366,18 @@ public final class OpenTelemetryTestUtils {
         String traceId = spans.get(0).getTraceId();
         spans.forEach(span -> {
             assertThat(span.getTraceId()).isEqualTo(traceId);
+        });
+    }
+
+    /**
+     * Validates span naming follows design document pattern.
+     *
+     * @param spans list of spans to validate
+     * @param expectedPrefix the expected span name prefix
+     */
+    public static void validateSpanNaming(List<SpanData> spans, String expectedPrefix) {
+        spans.forEach(span -> {
+            assertThat(span.getName()).startsWith(expectedPrefix);
         });
     }
 

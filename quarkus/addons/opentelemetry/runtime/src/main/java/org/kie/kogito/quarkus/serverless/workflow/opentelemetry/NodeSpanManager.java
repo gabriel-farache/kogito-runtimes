@@ -34,7 +34,6 @@ import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Context;
-import io.opentelemetry.context.Scope;
 
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -44,8 +43,10 @@ import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlo
 import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.RequestProperties;
 import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.SERVICE_NAME;
 import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.SERVICE_VERSION;
+import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.SONATAFLOW_PARENT_PROCESS_INSTANCE_ID;
 import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.SONATAFLOW_PROCESS_ID;
 import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.SONATAFLOW_PROCESS_INSTANCE_ID;
+import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.SONATAFLOW_PROCESS_INSTANCE_NODE;
 import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.SONATAFLOW_PROCESS_INSTANCE_STATE;
 import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.SONATAFLOW_PROCESS_VERSION;
 import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.SONATAFLOW_TRANSACTION_ID;
@@ -68,60 +69,28 @@ public class NodeSpanManager {
         this.config = config;
     }
 
-    record ScopeManager(Span span, Scope scope, String spanKey, Context previousContext) implements AutoCloseable {
+    record ScopeManager(Span span, String spanKey) implements AutoCloseable {
 
         void endWithStatus(StatusCode statusCode, String description) {
             try {
-                // Set status before cleanup
                 if (description != null) {
                     span.setStatus(statusCode, description);
                 } else {
                     span.setStatus(statusCode);
                 }
-
-                // End span first
                 span.end();
-
-                // Close scope (this should restore previousContext automatically)
-                scope.close();
-
-                // Context should be automatically restored by scope.close()
-                // No validation needed as OpenTelemetry handles this internally
-
             } catch (Exception e) {
-                LOGGER.error("Error ending span/scope for {}", spanKey, e);
+                LOGGER.error("Error ending span for {}", spanKey, e);
                 close();
             }
         }
 
         @Override
         public void close() {
-            if (scope != null) {
-                scope.close();
-            }
-
             if (span != null) {
                 span.end();
             }
         }
-    }
-
-    private Context determineParentContext(String processInstanceId, boolean isSubprocessNode) {
-        if (isSubprocessNode) {
-            LOGGER.debug("Using current context for subprocess node in process {}", processInstanceId);
-            return Context.current();
-        }
-
-        Context rootContext = OtelContextHolder.getRootContext(processInstanceId);
-        if (rootContext != null) {
-            LOGGER.debug("Using stored root context for regular node in process {}", processInstanceId);
-            return rootContext;
-        }
-
-        Context currentContext = Context.current();
-        OtelContextHolder.setRootContext(processInstanceId, currentContext);
-        LOGGER.debug("Captured and stored root context for first node in process {}", processInstanceId);
-        return currentContext;
     }
 
     private boolean isSpanCreationEnabled() {
@@ -182,16 +151,16 @@ public class NodeSpanManager {
     }
 
     private void endRemainingSpansWithStatus(String processInstanceId, StatusCode statusCode, String description) {
-        String statePrefix = processInstanceId + ":state:";
+        String nodePrefix = processInstanceId + ":";
         activeScopeManagers.entrySet().stream()
                 .filter(forProcessInstance(processInstanceId))
                 .forEach(entry -> {
                     ScopeManager manager = entry.getValue();
                     String spanKey = manager.spanKey();
 
-                    String stateName = spanKey.substring(statePrefix.length());
-                    String eventName = SonataFlowOtelAttributes.Events.STATE_COMPLETED;
-                    String eventDescription = SonataFlowOtelAttributes.EventDescriptions.STATE_COMPLETED_PREFIX + stateName;
+                    String nodeId = spanKey.substring(nodePrefix.length());
+                    String eventName = SonataFlowOtelAttributes.Events.NODE_COMPLETED;
+                    String eventDescription = SonataFlowOtelAttributes.EventDescriptions.NODE_COMPLETED_PREFIX + nodeId;
 
                     addProcessEvent(manager.span, eventName, eventDescription);
                     manager.endWithStatus(statusCode, description);
@@ -217,13 +186,8 @@ public class NodeSpanManager {
         }
     }
 
-    public Span createStateSpan(String processInstanceId, String processId, String processVersion,
-            String processState, String stateName) {
-        return createStateSpan(processInstanceId, processId, processVersion, processState, stateName, false);
-    }
-
-    public Span createStateSpan(String processInstanceId, String processId, String processVersion,
-            String processState, String stateName, boolean isSubprocessNode) {
+    public Span createNodeSpan(String processInstanceId, String processId, String processVersion,
+            String processState, String nodeId, String stateName, String parentProcessInstanceId) {
         if (!isSpanCreationEnabled()) {
             LOGGER.debug("Span creation disabled");
             return null;
@@ -232,14 +196,12 @@ public class NodeSpanManager {
         ScopeManager scopeManager = null;
         String spanKey = null;
         try {
-            Context previousContext = Context.current();
-            Context parentContext = determineParentContext(processInstanceId, isSubprocessNode);
+            Context parentContext = getOrCaptureRootContext(processInstanceId);
 
-            spanKey = buildStateSpanKey(processInstanceId, stateName);
-            Span span = buildStateSpan(processInstanceId, processId, processVersion, processState, stateName, parentContext);
-            Scope scope = span.makeCurrent();
+            spanKey = buildSpanKey(processInstanceId, nodeId);
+            Span span = buildSpan(processInstanceId, processId, processVersion, processState, nodeId, stateName, parentProcessInstanceId, parentContext);
 
-            scopeManager = new ScopeManager(span, scope, spanKey, previousContext);
+            scopeManager = new ScopeManager(span, spanKey);
             registerScopeManager(scopeManager, spanKey);
 
             lastActiveNodeSpan.put(processInstanceId, span);
@@ -252,20 +214,40 @@ public class NodeSpanManager {
                     lastActiveNodeSpan.remove(processInstanceId);
                 }
             }
-            LOGGER.error("Failed to create state span for {}:{}", processInstanceId, stateName, e);
+            LOGGER.error("Failed to create node span for {}:{}", processInstanceId, nodeId, e);
             return null;
         }
     }
 
-    private String buildStateSpanKey(String processInstanceId, String stateName) {
-        return processInstanceId + ":state:" + stateName;
+    private Context getOrCaptureRootContext(String processInstanceId) {
+        Context rootContext = OtelContextHolder.getRootContext(processInstanceId);
+        if (rootContext != null) {
+            LOGGER.debug("Using stored root context for process {}", processInstanceId);
+            return rootContext;
+        }
+
+        Context httpContext = OtelContextHolder.getHttpRequestContext();
+        if (httpContext != null) {
+            OtelContextHolder.setRootContext(processInstanceId, httpContext);
+            LOGGER.debug("Using HTTP request context for process {} (restart-safe)", processInstanceId);
+            return httpContext;
+        }
+
+        Context currentContext = Context.current();
+        OtelContextHolder.setRootContext(processInstanceId, currentContext);
+        LOGGER.debug("Captured and stored root context for first node in process {}", processInstanceId);
+        return currentContext;
     }
 
-    private Span buildStateSpan(String processInstanceId, String processId, String processVersion,
-            String processState, String stateName, Context parentContext) {
+    private String buildSpanKey(String processInstanceId, String nodeId) {
+        return processInstanceId + ":" + nodeId;
+    }
+
+    private Span buildSpan(String processInstanceId, String processId, String processVersion,
+            String processState, String nodeId, String stateName, String parentProcessInstanceId, Context parentContext) {
         String spanName = SpanNames.createProcessSpanName(processId);
 
-        return tracer.spanBuilder(spanName)
+        var spanBuilder = tracer.spanBuilder(spanName)
                 .setParent(parentContext)
                 .setSpanKind(SpanKind.INTERNAL)
                 .setAttribute(SONATAFLOW_PROCESS_INSTANCE_ID, processInstanceId)
@@ -274,13 +256,22 @@ public class NodeSpanManager {
                 .setAttribute(SONATAFLOW_PROCESS_INSTANCE_STATE, processState)
                 .setAttribute(SERVICE_NAME, config.serviceName())
                 .setAttribute(SERVICE_VERSION, config.serviceVersion())
-                .setAttribute(SONATAFLOW_WORKFLOW_STATE, stateName)
-                .startSpan();
+                .setAttribute(SONATAFLOW_PROCESS_INSTANCE_NODE, nodeId);
+
+        if (stateName != null && !stateName.isEmpty()) {
+            spanBuilder.setAttribute(SONATAFLOW_WORKFLOW_STATE, stateName);
+        }
+
+        if (parentProcessInstanceId != null && !parentProcessInstanceId.isEmpty()) {
+            spanBuilder.setAttribute(SONATAFLOW_PARENT_PROCESS_INSTANCE_ID, parentProcessInstanceId);
+        }
+
+        return spanBuilder.startSpan();
     }
 
-    public Span createStateSpanWithContext(String processInstanceId, String processId, String processVersion,
-            String processState, String stateName, Map<String, String> headerContext, boolean isSubprocessNode) {
-        Span span = createStateSpan(processInstanceId, processId, processVersion, processState, stateName, isSubprocessNode);
+    public Span createNodeSpanWithContext(String processInstanceId, String processId, String processVersion,
+            String processState, String nodeId, String stateName, String parentProcessInstanceId, Map<String, String> headerContext) {
+        Span span = createNodeSpan(processInstanceId, processId, processVersion, processState, nodeId, stateName, parentProcessInstanceId);
 
         if (span != null) {
             String transactionId = null;
@@ -306,18 +297,35 @@ public class NodeSpanManager {
         return span;
     }
 
-    public Span getActiveStateSpan(String processInstanceId, String stateName) {
-        String spanKey = buildStateSpanKey(processInstanceId, stateName);
+    public Span getActiveNodeSpan(String processInstanceId, String nodeId) {
+        String spanKey = buildSpanKey(processInstanceId, nodeId);
         ScopeManager manager = activeScopeManagers.get(spanKey);
         return manager != null ? manager.span() : null;
     }
 
-    public void endStateSpan(String processInstanceId, String stateName) {
-        String spanKey = buildStateSpanKey(processInstanceId, stateName);
+    @VisibleForTesting
+    boolean hasActiveScope(String processInstanceId, String nodeId) {
+        String spanKey = buildSpanKey(processInstanceId, nodeId);
+        return activeScopeManagers.containsKey(spanKey);
+    }
+
+    public void completeNodeSpan(Object event) {
+        if (!(event instanceof org.kie.api.event.process.ProcessNodeLeftEvent nodeLeftEvent)) {
+            return;
+        }
+
+        String processInstanceId = nodeLeftEvent.getProcessInstance().getId();
+        String nodeId = nodeLeftEvent.getNodeInstance().getNodeName();
+        completeNodeSpan(processInstanceId, nodeId);
+    }
+
+    public void completeNodeSpan(String processInstanceId, String nodeId) {
+        String spanKey = buildSpanKey(processInstanceId, nodeId);
+
         ScopeManager manager = activeScopeManagers.remove(spanKey);
         if (manager != null) {
             manager.endWithStatus(StatusCode.OK, null);
-            LOGGER.debug("Ended state span for {}", spanKey);
+            LOGGER.debug("Completed span for {}", spanKey);
         }
     }
 

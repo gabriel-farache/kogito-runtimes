@@ -19,7 +19,6 @@
 package org.kie.kogito.quarkus.serverless.workflow.opentelemetry;
 
 import java.time.LocalDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -46,12 +45,12 @@ public class OtelContextHolder {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(OtelContextHolder.class);
     private static final int MAX_CONTEXT_SIZE = 100;
-    private static final int TTL_MINUTES = 60;
 
     private static final Map<String, TimestampedValue<String>> processStartContexts = new ConcurrentHashMap<>();
     private static final Map<String, TimestampedValue<ProcessCompletionContext>> processCompletionContexts = new ConcurrentHashMap<>();
     private static final Map<String, TimestampedValue<Context>> rootContexts = new ConcurrentHashMap<>();
-    private static final Map<String, TimestampedValue<String>> activeStateContexts = new ConcurrentHashMap<>();
+
+    private static final ThreadLocal<Context> httpRequestContext = new ThreadLocal<>();
 
     public record ProcessCompletionContext(long durationMs, String outcome) {
     }
@@ -180,6 +179,37 @@ public class OtelContextHolder {
     }
 
     /**
+     * Set the HTTP request OpenTelemetry context.
+     * This captures the HTTP request span context BEFORE any workflow processing begins.
+     * Used to ensure all process instances resuming from this request use the correct parent span.
+     *
+     * @param context the OpenTelemetry context (containing the HTTP request span)
+     */
+    public static void setHttpRequestContext(Context context) {
+        if (context != null) {
+            httpRequestContext.set(context);
+        }
+    }
+
+    /**
+     * Get the HTTP request OpenTelemetry context.
+     * This returns the context captured at HTTP request entry, before any workflow processing.
+     *
+     * @return the HTTP request context, or null if not set
+     */
+    public static Context getHttpRequestContext() {
+        return httpRequestContext.get();
+    }
+
+    /**
+     * Clear the HTTP request OpenTelemetry context.
+     * This should be called at the end of HTTP request processing.
+     */
+    public static void clearHttpRequestContext() {
+        httpRequestContext.remove();
+    }
+
+    /**
      * Clear process-specific contexts for a single process instance.
      * This is useful for cleanup when a process completes.
      *
@@ -190,7 +220,6 @@ public class OtelContextHolder {
             processStartContexts.remove(processInstanceId);
             processCompletionContexts.remove(processInstanceId);
             rootContexts.remove(processInstanceId);
-            activeStateContexts.remove(processInstanceId);
         }
     }
 
@@ -261,46 +290,10 @@ public class OtelContextHolder {
         rootContexts.remove(processInstanceId);
     }
 
-    public static void setActiveState(String processInstanceId, String stateName) {
-        if (processInstanceId != null && stateName != null) {
-            activeStateContexts.put(processInstanceId, new TimestampedValue<>(stateName, LocalDateTime.now()));
-            enforceMaxSize();
-        }
-    }
-
-    public static String getActiveState(String processInstanceId) {
-        TimestampedValue<String> timestamped = activeStateContexts.get(processInstanceId);
-        return timestamped != null ? timestamped.value() : null;
-    }
-
-    public static void clearActiveState(String processInstanceId) {
-        activeStateContexts.remove(processInstanceId);
-    }
-
-    public static void cleanupExpiredProcessContexts() {
-        LocalDateTime cutoff = LocalDateTime.now().minus(TTL_MINUTES, ChronoUnit.MINUTES);
-
-        int removedStart = removeExpiredEntries(processStartContexts, cutoff);
-        int removedCompletion = removeExpiredEntries(processCompletionContexts, cutoff);
-        int removedRoot = removeExpiredEntries(rootContexts, cutoff);
-
-        if (removedStart > 0 || removedCompletion > 0 || removedRoot > 0) {
-            LOGGER.debug("Cleaned up {} expired process start contexts, {} completion contexts, and {} root contexts",
-                    removedStart, removedCompletion, removedRoot);
-        }
-    }
-
     public static void enforceMaxSize() {
         enforceMapMaxSize(processStartContexts, "start");
         enforceMapMaxSize(processCompletionContexts, "completion");
         enforceMapMaxSize(rootContexts, "root");
-        enforceMapMaxSize(activeStateContexts, "activeState");
-    }
-
-    private static <T> int removeExpiredEntries(Map<String, TimestampedValue<T>> map, LocalDateTime cutoff) {
-        int initialSize = map.size();
-        map.entrySet().removeIf(entry -> entry.getValue().timestamp().isBefore(cutoff));
-        return initialSize - map.size();
     }
 
     private static <T> void enforceMapMaxSize(Map<String, TimestampedValue<T>> map, String mapName) {

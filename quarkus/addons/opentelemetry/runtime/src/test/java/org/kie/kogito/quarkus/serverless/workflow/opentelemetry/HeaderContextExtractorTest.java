@@ -24,6 +24,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -34,11 +35,6 @@ public class HeaderContextExtractorTest {
     @BeforeEach
     public void setUp() {
         extractor = new HeaderContextExtractor();
-    }
-
-    @Test
-    public void shouldCreateHeaderContextExtractor() {
-        assertNotNull(extractor);
     }
 
     @Test
@@ -87,5 +83,29 @@ public class HeaderContextExtractorTest {
         Map<String, String> result = extractor.extractContextFromHeaders(headers);
 
         assertTrue(result.isEmpty());
+    }
+
+    @Test
+    public void shouldApplySanitizationToExtractContextFromHeaders() {
+        Map<String, String> headers = Map.of("X-TRANSACTION-ID", "malicious\n\rinjection");
+
+        Map<String, String> result = extractor.extractContextFromHeaders(headers);
+
+        String txnId = result.get("transaction.id");
+        assertNotNull(txnId, "Transaction ID should be extracted");
+        assertFalse(txnId.contains("\n"), "Newline characters should be sanitized");
+        assertFalse(txnId.contains("\r"), "Carriage return characters should be sanitized");
+    }
+
+    @Test
+    public void shouldTruncateLongValuesInExtractContextFromHeaders() {
+        String longValue = "a".repeat(200);
+        Map<String, String> headers = Map.of("X-TRANSACTION-ID", longValue);
+
+        Map<String, String> result = extractor.extractContextFromHeaders(headers);
+
+        String txnId = result.get("transaction.id");
+        assertNotNull(txnId, "Transaction ID should be extracted");
+        assertTrue(txnId.length() <= 100, "Long values should be truncated to 100 characters");
     }
 }

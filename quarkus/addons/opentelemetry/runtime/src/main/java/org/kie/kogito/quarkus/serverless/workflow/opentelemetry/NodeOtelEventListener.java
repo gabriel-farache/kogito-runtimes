@@ -23,8 +23,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-import org.jbpm.workflow.instance.node.LambdaSubProcessNodeInstance;
-import org.jbpm.workflow.instance.node.SubProcessNodeInstance;
 import org.kie.api.event.process.ProcessCompletedEvent;
 import org.kie.api.event.process.ProcessNodeLeftEvent;
 import org.kie.api.event.process.ProcessNodeTriggeredEvent;
@@ -39,15 +37,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import io.opentelemetry.api.trace.Span;
-import io.opentelemetry.context.Context;
 
 import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.EventDescriptions;
 import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.Events;
+import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.NodePatterns;
 import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.ProcessStates;
 
 public class NodeOtelEventListener extends DefaultKogitoProcessEventListener {
 
-    record NodeProcessDetails(String processInstanceId, String processId, String processVersion, String processState, String nodeId, String stateName) {
+    record NodeProcessDetails(String processInstanceId, String processId, String processVersion, String processState, String nodeId, String stateName, String parentProcessInstanceId) {
     }
 
     private static final Logger LOGGER = LoggerFactory.getLogger(NodeOtelEventListener.class);
@@ -75,83 +73,70 @@ public class NodeOtelEventListener extends DefaultKogitoProcessEventListener {
     public void beforeNodeTriggered(ProcessNodeTriggeredEvent event) {
         try {
             NodeProcessDetails details = extractNodeAndProcessDetails(event);
-            String stateName = details.stateName();
+            KogitoProcessInstance processInstance = (KogitoProcessInstance) event.getProcessInstance();
 
-            if (stateName == null) {
-                LOGGER.trace("Skipping node with no state metadata: {}", details.nodeId());
-                return;
-            }
-
-            boolean isSubprocessNode = isSubprocessNode(event.getNodeInstance());
-            String currentActiveState = OtelContextHolder.getActiveState(details.processInstanceId());
-
-            LOGGER.debug("Node triggered: {} (state: {}) for process instance {} (current active state: {})",
-                    details.nodeId(), stateName, details.processInstanceId(), currentActiveState);
-
-            if (stateName.equals(currentActiveState)) {
-                LOGGER.trace("Node {} in same state {}, reusing span", details.nodeId(), stateName);
-                return;
-            }
+            LOGGER.debug("Node triggered: {} for process instance {} (process: {})",
+                    details.nodeId(), details.processInstanceId(), details.processId());
 
             Map<String, String> extractedContext = OtelContextHolder.getExtractedContext();
             if (extractedContext.isEmpty()) {
-                extractedContext = handleContextReestablishment(
-                        (KogitoProcessInstance) event.getProcessInstance(), details.processInstanceId());
+                extractedContext = handleContextReestablishment(processInstance, details.processInstanceId());
             }
 
-            KogitoProcessInstance processInstance = (KogitoProcessInstance) event.getProcessInstance();
-            if (isFirstStateOfProcess(currentActiveState) && isSubprocess(processInstance)) {
-                Context parentContext = getParentContextForSubprocess(processInstance);
-                OtelContextHolder.setRootContext(details.processInstanceId(), parentContext);
-                LOGGER.debug("Set root context for subprocess {} from parent context", details.processInstanceId());
-            }
+            propagateRootContextToSubprocess(processInstance, details.processInstanceId());
 
-            if (currentActiveState != null) {
-                endStateSpan(details.processInstanceId(), currentActiveState);
-            }
-
-            createAndConfigureStateSpan(details, stateName, extractedContext, isSubprocessNode);
-
-            OtelContextHolder.setActiveState(details.processInstanceId(), stateName);
+            createAndConfigureNodeSpan(details.processInstanceId(), details.processId(),
+                    details.processVersion(), details.processState(), details.nodeId(), details.stateName(), details.parentProcessInstanceId(), extractedContext);
 
         } catch (Exception e) {
             LOGGER.error("Error in beforeNodeTriggered: {}", e.getMessage(), e);
         }
     }
 
-    private boolean isFirstStateOfProcess(String currentActiveState) {
-        return currentActiveState == null;
-    }
-
-    private void endStateSpan(String processInstanceId, String stateName) {
-        Span span = spanManager.getActiveStateSpan(processInstanceId, stateName);
-        if (span != null) {
-            spanManager.addProcessEvent(span, Events.STATE_COMPLETED,
-                    EventDescriptions.STATE_COMPLETED_PREFIX + stateName);
-            spanManager.endStateSpan(processInstanceId, stateName);
-            LOGGER.debug("Ended state span for state: {} in process: {}", stateName, processInstanceId);
-        }
-    }
-
-    private void createAndConfigureStateSpan(NodeProcessDetails details, String stateName,
-            Map<String, String> extractedContext, boolean isSubprocessNode) {
-        Span span = spanManager.createStateSpanWithContext(
-                details.processInstanceId(),
-                details.processId(),
-                details.processVersion(),
-                details.processState(),
-                stateName,
-                extractedContext,
-                isSubprocessNode);
-
-        if (span != null) {
-            spanManager.addProcessEvent(span, Events.STATE_STARTED,
-                    EventDescriptions.STATE_STARTED_PREFIX + stateName);
-
-            if (isFirstStateOfProcess(OtelContextHolder.getActiveState(details.processInstanceId()))) {
-                processEventHandler.handleProcessStartEvent(span, details.processInstanceId());
+    private void propagateRootContextToSubprocess(KogitoProcessInstance processInstance, String processInstanceId) {
+        String parentProcessInstanceId = processInstance.getParentProcessInstanceId();
+        if (parentProcessInstanceId != null && !parentProcessInstanceId.isEmpty()) {
+            if (OtelContextHolder.getRootContext(processInstanceId) == null) {
+                io.opentelemetry.context.Context parentRootContext = OtelContextHolder.getRootContext(parentProcessInstanceId);
+                if (parentRootContext != null) {
+                    OtelContextHolder.setRootContext(processInstanceId, parentRootContext);
+                    LOGGER.debug("Propagated root context from parent {} to subprocess {}",
+                            parentProcessInstanceId, processInstanceId);
+                }
             }
         }
+    }
+
+    private void createAndConfigureNodeSpan(String processInstanceId, String processId, String processVersion,
+            String processState, String nodeId, String stateName, String parentProcessInstanceId, Map<String, String> extractedContext) {
+        Span span = spanManager.createNodeSpanWithContext(processInstanceId, processId, processVersion,
+                processState, nodeId, stateName, parentProcessInstanceId, extractedContext);
+
+        if (span != null) {
+            spanManager.addProcessEvent(span, Events.NODE_STARTED, EventDescriptions.NODE_STARTED_PREFIX + nodeId);
+            if (isStartNode(nodeId)) {
+                processEventHandler.handleProcessStartEvent(span, processInstanceId);
+            }
+        }
+    }
+
+    private boolean isStartNode(String nodeId) {
+        return NodePatterns.START.equals(nodeId);
+    }
+
+    private NodeProcessDetails extractNodeAndProcessDetails(ProcessNodeTriggeredEvent event) {
+        KogitoNodeInstance nodeInstance = (KogitoNodeInstance) event.getNodeInstance();
+        KogitoProcessInstance processInstance = (KogitoProcessInstance) event.getProcessInstance();
+
+        String processInstanceId = processInstance.getId();
+        String processId = processInstance.getProcessId();
+        String processVersion = processInstance.getProcessVersion();
+        String processState = getProcessState(processInstance.getState());
+        String nodeId = nodeInstance.getNodeName();
+        String stateName = extractStateName(event.getNodeInstance());
+        String parentProcessInstanceId = processInstance.getParentProcessInstanceId();
+
+        return new NodeProcessDetails(processInstanceId, processId, processVersion, processState, nodeId, stateName, parentProcessInstanceId);
     }
 
     private String extractStateName(org.kie.api.runtime.process.NodeInstance nodeInstance) {
@@ -165,20 +150,6 @@ public class NodeOtelEventListener extends DefaultKogitoProcessEventListener {
             }
         }
         return null;
-    }
-
-    private NodeProcessDetails extractNodeAndProcessDetails(ProcessNodeTriggeredEvent event) {
-        KogitoNodeInstance nodeInstance = (KogitoNodeInstance) event.getNodeInstance();
-        KogitoProcessInstance processInstance = (KogitoProcessInstance) event.getProcessInstance();
-
-        String processInstanceId = processInstance.getId();
-        String processId = processInstance.getProcessId();
-        String processVersion = processInstance.getProcessVersion();
-        String processState = getProcessState(processInstance.getState());
-        String nodeId = nodeInstance.getNodeName();
-        String stateName = extractStateName(event.getNodeInstance());
-
-        return new NodeProcessDetails(processInstanceId, processId, processVersion, processState, nodeId, stateName);
     }
 
     private Map<String, String> handleContextReestablishment(KogitoProcessInstance processInstance, String processInstanceId) {
@@ -197,41 +168,6 @@ public class NodeOtelEventListener extends DefaultKogitoProcessEventListener {
             LOGGER.debug("Failed to extract context from process headers: {}", e.getMessage());
         }
         return Map.of();
-    }
-
-    private boolean isSubprocessNode(org.kie.api.runtime.process.NodeInstance nodeInstance) {
-        return nodeInstance instanceof LambdaSubProcessNodeInstance
-                || nodeInstance instanceof SubProcessNodeInstance;
-    }
-
-    private boolean isSubprocess(KogitoProcessInstance processInstance) {
-        String parentId = processInstance.getParentProcessInstanceId();
-        return parentId != null && !parentId.isEmpty();
-    }
-
-    private Context getParentContextForSubprocess(KogitoProcessInstance processInstance) {
-        String parentProcessInstanceId = processInstance.getParentProcessInstanceId();
-        if (parentProcessInstanceId == null || parentProcessInstanceId.isEmpty()) {
-            LOGGER.debug("No parent process instance ID, falling back to current context");
-            return Context.current();
-        }
-
-        String parentActiveState = OtelContextHolder.getActiveState(parentProcessInstanceId);
-        if (parentActiveState == null) {
-            LOGGER.debug("No active state for parent process {}, falling back to current context",
-                    parentProcessInstanceId);
-            return Context.current();
-        }
-
-        Span parentSpan = spanManager.getActiveStateSpan(parentProcessInstanceId, parentActiveState);
-        if (parentSpan == null) {
-            LOGGER.debug("No active span for parent {} state {}, falling back to current context",
-                    parentProcessInstanceId, parentActiveState);
-            return Context.current();
-        }
-
-        LOGGER.debug("Using parent span from process {} state {}", parentProcessInstanceId, parentActiveState);
-        return parentSpan.storeInContext(Context.root());
     }
 
     @Override
@@ -262,16 +198,11 @@ public class NodeOtelEventListener extends DefaultKogitoProcessEventListener {
             String outcome) {
 
         if (config.events().enabled()) {
-            String activeState = OtelContextHolder.getActiveState(processInstanceId);
-            if (activeState != null) {
-                Span stateSpan = spanManager.getActiveStateSpan(processInstanceId, activeState);
-                if (stateSpan != null) {
-                    spanManager.addProcessEvent(stateSpan, Events.STATE_COMPLETED,
-                            EventDescriptions.STATE_COMPLETED_PREFIX + activeState);
-                }
-            }
+            Span targetSpan = spanManager.getActiveNodeSpan(processInstanceId, NodePatterns.END);
 
-            Span targetSpan = spanManager.getLastActiveSpan(processInstanceId);
+            if (targetSpan == null) {
+                targetSpan = spanManager.getLastActiveSpan(processInstanceId);
+            }
 
             if (targetSpan == null) {
                 targetSpan = spanManager.getAnyActiveSpan(processInstanceId);
@@ -292,7 +223,6 @@ public class NodeOtelEventListener extends DefaultKogitoProcessEventListener {
             }
         }
 
-        OtelContextHolder.clearActiveState(processInstanceId);
         OtelContextHolder.clearProcessContexts(processInstanceId);
     }
 
@@ -304,9 +234,15 @@ public class NodeOtelEventListener extends DefaultKogitoProcessEventListener {
 
             String processInstanceId = processInstance.getId();
             String nodeId = nodeInstance.getNodeName();
-            String stateName = extractStateName(event.getNodeInstance());
 
-            LOGGER.trace("Node {} left in state {}", nodeId, stateName);
+            LOGGER.debug("Node left: {} for process instance {}", nodeId, processInstanceId);
+
+            Span span = spanManager.getActiveNodeSpan(processInstanceId, nodeId);
+            if (span != null) {
+                spanManager.addProcessEvent(span, Events.NODE_COMPLETED, EventDescriptions.NODE_COMPLETED_PREFIX + nodeId);
+                spanManager.completeNodeSpan(processInstanceId, nodeId);
+                LOGGER.debug("Completed span for node: {}", nodeId);
+            }
 
             if (processInstance.getState() == ProcessInstance.STATE_ERROR) {
                 handleProcessErrorAfterNodeLeft(processInstance, processInstanceId);
