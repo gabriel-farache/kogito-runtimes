@@ -107,14 +107,15 @@ public class ProcessEventHandler {
     }
 
     private Span createErrorSpanForProcess(KogitoProcessInstance processInstance, String processInstanceId, Map<String, String> extractedContext) {
-        return spanManager.createStateSpanWithContext(
+        return spanManager.createNodeSpanWithContext(
                 processInstanceId,
                 processInstance.getProcessId(),
                 processInstance.getProcessVersion(),
                 ProcessStates.ERROR,
                 "ProcessError",
-                extractedContext,
-                false);
+                null,
+                processInstance.getParentProcessInstanceId(),
+                extractedContext);
     }
 
     private void addErrorAndCompleteEvents(Span errorSpan, KogitoProcessInstance processInstance, String processInstanceId, long durationMs) {

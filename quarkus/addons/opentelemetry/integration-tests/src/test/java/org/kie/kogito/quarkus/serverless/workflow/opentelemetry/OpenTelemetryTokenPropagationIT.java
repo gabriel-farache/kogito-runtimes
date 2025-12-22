@@ -100,19 +100,19 @@ public class OpenTelemetryTokenPropagationIT {
     }
 
     /**
-     * Test to verify that subflow spans maintain proper parent-child span hierarchy.
-     * When a workflow invokes a subflow, the subflow's spans should be children of
-     * the subprocess/subflow invocation span, not flat siblings.
+     * Test to verify that subflow spans maintain flat hierarchy with main workflow.
+     * With the new flat hierarchy design, all spans (including subflows) should share
+     * the same parent span, creating a completely flat structure.
      *
      * This validates:
      * - Main workflow spans have flat hierarchy (all siblings)
-     * - Subflow spans are children of the ExecuteSubflow state span
-     * - Subflow spans are properly nested under their parent
-     * - The hierarchy is maintained correctly across workflow boundaries
+     * - Subflow spans also have flat hierarchy (all siblings)
+     * - All spans (main + subflow) share the same parent span ID
+     * - No hierarchical nesting between workflow and subflow spans
      */
     @Test
-    void shouldMaintainHierarchyForSubflowNodes() {
-        executeTokenPropagationWorkflow("workflow-subflow-hierarchy-test-txn", 201);
+    void shouldMaintainFlatHierarchyForSubflowNodes() {
+        executeTokenPropagationWorkflow("workflow-subflow-flat-hierarchy-test-txn", 201);
 
         await().atMost(Duration.ofSeconds(25)).untilAsserted(() -> {
             List<SpanData> spans = OtlpMockTestResource.getSpans();
@@ -123,7 +123,7 @@ public class OpenTelemetryTokenPropagationIT {
                     .isNotEmpty();
 
             List<SpanData> currentTestSpans = filterSpansByTransactionId(workflowSpans,
-                    "workflow-subflow-hierarchy-test-txn");
+                    "workflow-subflow-flat-hierarchy-test-txn");
 
             List<SpanData> mainWorkflowSpans = filterMainWorkflowSpans(currentTestSpans, "token_propagation");
             List<SpanData> subflowSpans = filterSubflowSpans(currentTestSpans, "tokenPropagationSubflow");
@@ -144,31 +144,21 @@ public class OpenTelemetryTokenPropagationIT {
                     .withFailMessage("Main workflow spans should have flat hierarchy (all same parent)")
                     .hasSize(1);
 
-            SpanData executeSubflowSpan = findSpanByStateName(mainWorkflowSpans, "ExecuteSubflow");
-            String executeSubflowSpanId = executeSubflowSpan.getSpanId();
+            Set<String> subflowParentSpanIds = subflowSpans.stream()
+                    .map(SpanData::getParentSpanId)
+                    .filter(id -> id != null)
+                    .collect(Collectors.toSet());
 
-            long subflowSpansWithCorrectParent = subflowSpans.stream()
-                    .filter(span -> executeSubflowSpanId.equals(span.getParentSpanId()))
-                    .count();
+            assertThat(subflowParentSpanIds)
+                    .withFailMessage("Subflow spans should have flat hierarchy (all same parent)")
+                    .hasSize(1);
 
-            assertThat(subflowSpansWithCorrectParent)
-                    .withFailMessage("Subflow spans should be children of ExecuteSubflow state span")
-                    .isGreaterThan(0);
+            String mainParentId = mainWorkflowParentSpanIds.iterator().next();
+            String subflowParentId = subflowParentSpanIds.iterator().next();
 
-            subflowSpans.forEach(span -> {
-                String parentSpanId = span.getParentSpanId();
-                assertThat(parentSpanId)
-                        .withFailMessage("Each subflow span should have a parent span ID. Span: %s", span.getName())
-                        .isNotNull();
-
-                boolean parentIsHttpSpan = !currentTestSpans.stream()
-                        .anyMatch(s -> s.getSpanId().equals(parentSpanId));
-
-                assertThat(parentIsHttpSpan)
-                        .withFailMessage("Subflow span parent should be a workflow span (ExecuteSubflow), not HTTP span. Span: %s",
-                                span.getName())
-                        .isFalse();
-            });
+            assertThat(mainParentId)
+                    .withFailMessage("All spans (main + subflow) should share the same parent span ID for flat hierarchy")
+                    .isEqualTo(subflowParentId);
         });
     }
 
@@ -284,7 +274,7 @@ public class OpenTelemetryTokenPropagationIT {
      * @return the ExecuteSubflow span (first main workflow span that's a parent of subflow spans)
      */
     private static SpanData validateParentChildSpanRelationship(List<SpanData> mainWorkflowSpans, List<SpanData> subflowSpans) {
-        SpanData executeSubflowSpan = findSpanByStateName(mainWorkflowSpans, "ExecuteSubflow");
+        SpanData executeSubflowSpan = findSpanByNodeName(mainWorkflowSpans, "ExecuteSubflow");
 
         subflowSpans.forEach(span -> {
             String parentSpanId = span.getParentSpanId();
@@ -316,15 +306,15 @@ public class OpenTelemetryTokenPropagationIT {
     }
 
     /**
-     * Validates that subflow states are executed.
+     * Validates that subflow nodes are executed.
      *
      * @param subflowSpans spans from the subflow
      */
     private static void validateSubflowNodeExecution(List<SpanData> subflowSpans) {
-        Set<String> actualSubflowStates = extractStateNames(subflowSpans);
+        Set<String> actualSubflowNodes = extractNodeNames(subflowSpans);
 
-        assertThat(actualSubflowStates)
-                .withFailMessage("Subflow should have at least one state executed")
+        assertThat(actualSubflowNodes)
+                .withFailMessage("Subflow should have at least one node executed")
                 .isNotEmpty();
     }
 
@@ -343,8 +333,8 @@ public class OpenTelemetryTokenPropagationIT {
             SpanData currentSpan = sortedSpans.get(i);
             assertThat(currentSpan.getStartEpochNanos())
                     .withFailMessage("Span %s should start after or at the same time as previous span %s",
-                            currentSpan.getAttributes().get(SONATAFLOW_WORKFLOW_STATE),
-                            previousSpan.getAttributes().get(SONATAFLOW_WORKFLOW_STATE))
+                            currentSpan.getAttributes().get(SONATAFLOW_PROCESS_INSTANCE_NODE),
+                            previousSpan.getAttributes().get(SONATAFLOW_PROCESS_INSTANCE_NODE))
                     .isGreaterThanOrEqualTo(previousSpan.getStartEpochNanos());
         }
     }
@@ -359,7 +349,7 @@ public class OpenTelemetryTokenPropagationIT {
             long duration = span.getEndEpochNanos() - span.getStartEpochNanos();
             assertThat(duration)
                     .withFailMessage("Span %s should have positive duration",
-                            span.getAttributes().get(SONATAFLOW_WORKFLOW_STATE))
+                            span.getAttributes().get(SONATAFLOW_PROCESS_INSTANCE_NODE))
                     .isGreaterThan(0);
         });
     }
@@ -373,7 +363,7 @@ public class OpenTelemetryTokenPropagationIT {
         spans.forEach(span -> {
             assertThat(span.getStatus().getStatusCode())
                     .withFailMessage("Span %s should not have error status for successful workflow execution",
-                            span.getAttributes().get(SONATAFLOW_WORKFLOW_STATE))
+                            span.getAttributes().get(SONATAFLOW_PROCESS_INSTANCE_NODE))
                     .isNotEqualTo(io.opentelemetry.api.trace.StatusCode.ERROR);
         });
     }
@@ -394,21 +384,21 @@ public class OpenTelemetryTokenPropagationIT {
     }
 
     /**
-     * Finds a span by state name.
+     * Finds a span by node name.
      *
      * @param spans list of spans to search
-     * @param stateName the state name to find
-     * @return the span with the specified state name
+     * @param nodeName the node name to find
+     * @return the span with the specified node name
      * @throws AssertionError if span is not found
      */
-    private static SpanData findSpanByStateName(List<SpanData> spans, String stateName) {
+    private static SpanData findSpanByNodeName(List<SpanData> spans, String nodeName) {
         return spans.stream()
                 .filter(span -> {
-                    String spanStateName = span.getAttributes().get(SONATAFLOW_WORKFLOW_STATE);
-                    return stateName.equals(spanStateName);
+                    String spanNodeName = span.getAttributes().get(SONATAFLOW_PROCESS_INSTANCE_NODE);
+                    return nodeName.equals(spanNodeName);
                 })
                 .findFirst()
-                .orElseThrow(() -> new AssertionError("Span with state name '" + stateName + "' not found"));
+                .orElseThrow(() -> new AssertionError("Span with node name '" + nodeName + "' not found"));
     }
 
     /**
@@ -436,15 +426,15 @@ public class OpenTelemetryTokenPropagationIT {
     }
 
     /**
-     * Extracts unique state names from spans.
+     * Extracts unique node names from spans.
      *
      * @param spans list of spans
-     * @return set of unique state names
+     * @return set of unique node names
      */
-    private static Set<String> extractStateNames(List<SpanData> spans) {
+    private static Set<String> extractNodeNames(List<SpanData> spans) {
         return spans.stream()
-                .map(span -> span.getAttributes().get(SONATAFLOW_WORKFLOW_STATE))
-                .filter(stateName -> stateName != null)
+                .map(span -> span.getAttributes().get(SONATAFLOW_PROCESS_INSTANCE_NODE))
+                .filter(nodeName -> nodeName != null)
                 .collect(Collectors.toSet());
     }
 }

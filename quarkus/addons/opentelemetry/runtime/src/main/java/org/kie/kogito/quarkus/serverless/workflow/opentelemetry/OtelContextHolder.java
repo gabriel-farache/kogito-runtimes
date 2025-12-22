@@ -19,7 +19,6 @@
 package org.kie.kogito.quarkus.serverless.workflow.opentelemetry;
 
 import java.time.LocalDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -28,6 +27,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanContext;
 import io.opentelemetry.context.Context;
 
 import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.MDCKeys;
@@ -46,12 +47,13 @@ public class OtelContextHolder {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(OtelContextHolder.class);
     private static final int MAX_CONTEXT_SIZE = 100;
-    private static final int TTL_MINUTES = 60;
 
     private static final Map<String, TimestampedValue<String>> processStartContexts = new ConcurrentHashMap<>();
     private static final Map<String, TimestampedValue<ProcessCompletionContext>> processCompletionContexts = new ConcurrentHashMap<>();
-    private static final Map<String, TimestampedValue<Context>> rootContexts = new ConcurrentHashMap<>();
-    private static final Map<String, TimestampedValue<String>> activeStateContexts = new ConcurrentHashMap<>();
+    private static final Map<String, TimestampedValue<SpanContext>> rootSpanContexts = new ConcurrentHashMap<>();
+
+    private static final ThreadLocal<SpanContext> httpRequestSpanContext = new ThreadLocal<>();
+    private static final ThreadLocal<Span> currentWorkflowSpan = new ThreadLocal<>();
 
     public record ProcessCompletionContext(long durationMs, String outcome) {
     }
@@ -180,6 +182,68 @@ public class OtelContextHolder {
     }
 
     /**
+     * Set the HTTP request span context.
+     * This captures the span context (trace ID, span ID) from the current HTTP request span
+     * BEFORE any workflow processing begins. Only the span identity is stored, not the full
+     * Context, to avoid propagating transaction or other thread-local state across threads.
+     *
+     * @param context the OpenTelemetry context (containing the HTTP request span)
+     */
+    public static void setHttpRequestContext(Context context) {
+        if (context != null) {
+            Span span = Span.fromContext(context);
+            if (span != null && span.getSpanContext().isValid()) {
+                httpRequestSpanContext.set(span.getSpanContext());
+            }
+        }
+    }
+
+    /**
+     * Get the HTTP request span context.
+     * This returns the span context captured at HTTP request entry, before any workflow processing.
+     *
+     * @return the HTTP request span context, or null if not set
+     */
+    public static SpanContext getHttpRequestSpanContext() {
+        return httpRequestSpanContext.get();
+    }
+
+    /**
+     * Clear the HTTP request span context.
+     * This should be called at the end of HTTP request processing.
+     */
+    public static void clearHttpRequestContext() {
+        httpRequestSpanContext.remove();
+    }
+
+    /**
+     * Set the current workflow span for this thread.
+     * This is used by OtelLogHandler to attach log events to the correct span.
+     *
+     * @param span the current workflow span
+     */
+    public static void setCurrentWorkflowSpan(Span span) {
+        currentWorkflowSpan.set(span);
+    }
+
+    /**
+     * Get the current workflow span for this thread.
+     * This is used by OtelLogHandler to attach log events.
+     *
+     * @return the current workflow span, or null if not set
+     */
+    public static Span getCurrentWorkflowSpan() {
+        return currentWorkflowSpan.get();
+    }
+
+    /**
+     * Clear the current workflow span for this thread.
+     */
+    public static void clearCurrentWorkflowSpan() {
+        currentWorkflowSpan.remove();
+    }
+
+    /**
      * Clear process-specific contexts for a single process instance.
      * This is useful for cleanup when a process completes.
      *
@@ -189,8 +253,7 @@ public class OtelContextHolder {
         if (processInstanceId != null) {
             processStartContexts.remove(processInstanceId);
             processCompletionContexts.remove(processInstanceId);
-            rootContexts.remove(processInstanceId);
-            activeStateContexts.remove(processInstanceId);
+            rootSpanContexts.remove(processInstanceId);
         }
     }
 
@@ -228,27 +291,44 @@ public class OtelContextHolder {
     }
 
     /**
-     * Set the root OpenTelemetry context for a process instance.
-     * This captures the HTTP request span context that all regular nodes will use as parent.
+     * Set the root span context for a process instance.
+     * This captures only the span identity (trace ID, span ID) from the context,
+     * not the full Context, to avoid propagating transaction or other thread-local state.
      *
      * @param processInstanceId the process instance ID
      * @param context the OpenTelemetry context (typically containing the HTTP request span)
      */
     public static void setRootContext(String processInstanceId, Context context) {
         if (processInstanceId != null && context != null) {
-            rootContexts.put(processInstanceId, new TimestampedValue<>(context, LocalDateTime.now()));
+            Span span = Span.fromContext(context);
+            if (span != null && span.getSpanContext().isValid()) {
+                rootSpanContexts.put(processInstanceId, new TimestampedValue<>(span.getSpanContext(), LocalDateTime.now()));
+                enforceMaxSize();
+            }
+        }
+    }
+
+    /**
+     * Set the root span context for a process instance directly from a SpanContext.
+     *
+     * @param processInstanceId the process instance ID
+     * @param spanContext the span context to store
+     */
+    public static void setRootSpanContext(String processInstanceId, SpanContext spanContext) {
+        if (processInstanceId != null && spanContext != null && spanContext.isValid()) {
+            rootSpanContexts.put(processInstanceId, new TimestampedValue<>(spanContext, LocalDateTime.now()));
             enforceMaxSize();
         }
     }
 
     /**
-     * Get the stored root OpenTelemetry context for a process instance.
+     * Get the stored root span context for a process instance.
      *
      * @param processInstanceId the process instance ID
-     * @return the stored context, or null if not set
+     * @return the stored span context, or null if not set
      */
-    public static Context getRootContext(String processInstanceId) {
-        TimestampedValue<Context> timestamped = rootContexts.get(processInstanceId);
+    public static SpanContext getRootSpanContext(String processInstanceId) {
+        TimestampedValue<SpanContext> timestamped = rootSpanContexts.get(processInstanceId);
         return timestamped != null ? timestamped.value() : null;
     }
 
@@ -258,49 +338,13 @@ public class OtelContextHolder {
      * @param processInstanceId the process instance ID
      */
     public static void clearRootContext(String processInstanceId) {
-        rootContexts.remove(processInstanceId);
-    }
-
-    public static void setActiveState(String processInstanceId, String stateName) {
-        if (processInstanceId != null && stateName != null) {
-            activeStateContexts.put(processInstanceId, new TimestampedValue<>(stateName, LocalDateTime.now()));
-            enforceMaxSize();
-        }
-    }
-
-    public static String getActiveState(String processInstanceId) {
-        TimestampedValue<String> timestamped = activeStateContexts.get(processInstanceId);
-        return timestamped != null ? timestamped.value() : null;
-    }
-
-    public static void clearActiveState(String processInstanceId) {
-        activeStateContexts.remove(processInstanceId);
-    }
-
-    public static void cleanupExpiredProcessContexts() {
-        LocalDateTime cutoff = LocalDateTime.now().minus(TTL_MINUTES, ChronoUnit.MINUTES);
-
-        int removedStart = removeExpiredEntries(processStartContexts, cutoff);
-        int removedCompletion = removeExpiredEntries(processCompletionContexts, cutoff);
-        int removedRoot = removeExpiredEntries(rootContexts, cutoff);
-
-        if (removedStart > 0 || removedCompletion > 0 || removedRoot > 0) {
-            LOGGER.debug("Cleaned up {} expired process start contexts, {} completion contexts, and {} root contexts",
-                    removedStart, removedCompletion, removedRoot);
-        }
+        rootSpanContexts.remove(processInstanceId);
     }
 
     public static void enforceMaxSize() {
         enforceMapMaxSize(processStartContexts, "start");
         enforceMapMaxSize(processCompletionContexts, "completion");
-        enforceMapMaxSize(rootContexts, "root");
-        enforceMapMaxSize(activeStateContexts, "activeState");
-    }
-
-    private static <T> int removeExpiredEntries(Map<String, TimestampedValue<T>> map, LocalDateTime cutoff) {
-        int initialSize = map.size();
-        map.entrySet().removeIf(entry -> entry.getValue().timestamp().isBefore(cutoff));
-        return initialSize - map.size();
+        enforceMapMaxSize(rootSpanContexts, "root");
     }
 
     private static <T> void enforceMapMaxSize(Map<String, TimestampedValue<T>> map, String mapName) {

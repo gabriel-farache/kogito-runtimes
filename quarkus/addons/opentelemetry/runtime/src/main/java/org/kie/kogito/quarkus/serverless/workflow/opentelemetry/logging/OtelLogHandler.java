@@ -18,36 +18,42 @@
  */
 package org.kie.kogito.quarkus.serverless.workflow.opentelemetry.logging;
 
-import java.util.logging.Handler;
 import java.util.logging.Level;
-import java.util.logging.LogRecord;
+
+import org.jboss.logmanager.ExtHandler;
+import org.jboss.logmanager.ExtLogRecord;
+import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.OtelContextHolder;
 
 import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.Span;
 
 import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.*;
 
-public class OtelLogHandler extends Handler {
+public class OtelLogHandler extends ExtHandler {
 
     private Level minimumLevel = Level.INFO;
 
     @Override
-    public void publish(LogRecord record) {
+    protected void doPublish(ExtLogRecord record) {
         if (!shouldCapture(record)) {
             return;
         }
 
-        Span currentSpan = Span.current();
-        if (currentSpan == null || !currentSpan.getSpanContext().isValid()) {
+        Span targetSpan = OtelContextHolder.getCurrentWorkflowSpan();
+
+        if (targetSpan == null || !targetSpan.getSpanContext().isValid()) {
+            targetSpan = Span.current();
+        }
+        if (targetSpan == null || !targetSpan.getSpanContext().isValid()) {
             return;
         }
 
-        String formattedMessage = record.getMessage();
-        if (record.getParameters() != null && record.getParameters().length > 0) {
-            formattedMessage = String.format(formattedMessage, record.getParameters());
+        String formattedMessage = record.getFormattedMessage();
+        if (formattedMessage == null) {
+            formattedMessage = record.getMessage();
         }
 
-        currentSpan.addEvent(Events.LOG_MESSAGE, Attributes.of(
+        targetSpan.addEvent(Events.LOG_MESSAGE, Attributes.of(
                 LOG_LEVEL, record.getLevel().getName(),
                 LOG_LOGGER, record.getLoggerName(),
                 LOG_MESSAGE, formattedMessage,
@@ -55,15 +61,7 @@ public class OtelLogHandler extends Handler {
                 LOG_THREAD_ID, Thread.currentThread().getId()));
     }
 
-    @Override
-    public void flush() {
-    }
-
-    @Override
-    public void close() throws SecurityException {
-    }
-
-    private boolean shouldCapture(LogRecord record) {
+    private boolean shouldCapture(ExtLogRecord record) {
         return record.getLevel().intValue() >= minimumLevel.intValue();
     }
 

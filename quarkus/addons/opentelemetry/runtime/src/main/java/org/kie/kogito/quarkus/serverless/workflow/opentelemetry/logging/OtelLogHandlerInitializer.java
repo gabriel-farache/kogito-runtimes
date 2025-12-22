@@ -19,8 +19,12 @@
 package org.kie.kogito.quarkus.serverless.workflow.opentelemetry.logging;
 
 import java.util.Arrays;
+import java.util.logging.Handler;
 import java.util.logging.Level;
-import java.util.logging.Logger;
+
+import org.jboss.logmanager.LogContext;
+import org.jboss.logmanager.Logger;
+import org.slf4j.LoggerFactory;
 
 import io.quarkus.runtime.StartupEvent;
 
@@ -30,18 +34,20 @@ import jakarta.enterprise.event.Observes;
 @ApplicationScoped
 public class OtelLogHandlerInitializer {
 
+    private static final org.slf4j.Logger LOGGER = LoggerFactory.getLogger(OtelLogHandlerInitializer.class);
     private static final OtelLogHandler handler = new OtelLogHandler();
 
     void onStart(@Observes StartupEvent ev) {
-        Logger rootLogger = Logger.getLogger("");
+        Logger rootLogger = LogContext.getLogContext().getLogger("");
         handler.setMinimumLevel("INFO");
         handler.setLevel(Level.INFO);
-        if (Arrays.stream(rootLogger.getHandlers()).noneMatch(h -> h instanceof OtelLogHandler)) {
-            rootLogger.addHandler(handler);
-        }
 
-        // Note: Kogito logs are automatically captured via root logger inheritance.
-        // Previously registered handler on "org.kie.kogito" logger caused duplication
-        // because the same handler processed logs at both levels due to propagation.
+        Handler[] handlers = rootLogger.getHandlers();
+        if (Arrays.stream(handlers).noneMatch(h -> h instanceof OtelLogHandler)) {
+            rootLogger.addHandler(handler);
+            LOGGER.info("OtelLogHandler registered with JBoss LogManager root logger. Handler count: {}", rootLogger.getHandlers().length);
+        } else {
+            LOGGER.debug("OtelLogHandler already registered with JBoss LogManager root logger");
+        }
     }
 }
