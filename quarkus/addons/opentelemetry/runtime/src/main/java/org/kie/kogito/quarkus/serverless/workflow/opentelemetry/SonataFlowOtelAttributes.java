@@ -110,7 +110,10 @@ public final class SonataFlowOtelAttributes {
 
         public static final String NODE_STARTED = "node.started";
         public static final String NODE_COMPLETED = "node.completed";
+        public static final String NODE_TRIGGERED = "node.triggered";
+        public static final String NODE_LEFT = "node.left";
         public static final String PROCESS_INSTANCE_START = "process.instance.start";
+        public static final String PROCESS_INSTANCE_RESUME = "process.instance.resume";
         public static final String PROCESS_INSTANCE_COMPLETE = "process.instance.complete";
         public static final String PROCESS_INSTANCE_ERROR = "process.instance.error";
         public static final String LOG_MESSAGE = "log.message";

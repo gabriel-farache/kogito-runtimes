@@ -16,12 +16,13 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.kie.kogito.quarkus.serverless.workflow.opentelemetry;
+package org.kie.kogito.quarkus.serverless.workflow.opentelemetry.mode.nodespan;
 
 import java.util.Map;
 
 import org.kie.kogito.internal.process.runtime.KogitoProcessInstance;
 import org.kie.kogito.process.ProcessInstance;
+import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.common.OtelContextHolder;
 import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.config.SonataFlowOtelConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

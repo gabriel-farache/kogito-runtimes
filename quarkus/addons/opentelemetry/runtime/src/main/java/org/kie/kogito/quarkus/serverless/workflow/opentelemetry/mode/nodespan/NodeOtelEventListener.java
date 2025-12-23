@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.kie.kogito.quarkus.serverless.workflow.opentelemetry;
+package org.kie.kogito.quarkus.serverless.workflow.opentelemetry.mode.nodespan;
 
 import java.util.Date;
 import java.util.Map;
@@ -31,7 +31,11 @@ import org.kie.kogito.internal.process.event.DefaultKogitoProcessEventListener;
 import org.kie.kogito.internal.process.runtime.KogitoNodeInstance;
 import org.kie.kogito.internal.process.runtime.KogitoProcessInstance;
 import org.kie.kogito.process.ProcessInstance;
+import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes;
+import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.common.HeaderContextExtractor;
+import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.common.OtelContextHolder;
 import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.config.SonataFlowOtelConfig;
+import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.util.ProcessStateConverter;
 import org.kie.kogito.serverless.workflow.SWFConstants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -131,7 +135,7 @@ public class NodeOtelEventListener extends DefaultKogitoProcessEventListener {
         String processInstanceId = processInstance.getId();
         String processId = processInstance.getProcessId();
         String processVersion = processInstance.getProcessVersion();
-        String processState = getProcessState(processInstance.getState());
+        String processState = ProcessStateConverter.fromState(processInstance.getState());
         String nodeId = nodeInstance.getNodeName();
         String stateName = extractStateName(event.getNodeInstance());
         String parentProcessInstanceId = processInstance.getParentProcessInstanceId();
@@ -175,7 +179,7 @@ public class NodeOtelEventListener extends DefaultKogitoProcessEventListener {
         try {
             KogitoProcessInstance processInstance = (KogitoProcessInstance) event.getProcessInstance();
             String processInstanceId = processInstance.getId();
-            String outcome = getProcessState(processInstance.getState());
+            String outcome = ProcessStateConverter.fromState(processInstance.getState());
 
             long startTime = processInstance.getStartDate().getTime();
             long endTime = System.currentTimeMillis();
@@ -249,25 +253,6 @@ public class NodeOtelEventListener extends DefaultKogitoProcessEventListener {
             }
         } catch (Exception e) {
             LOGGER.error("Error in afterNodeLeft: {}", e.getMessage(), e);
-        }
-    }
-
-    private String getProcessState(int state) {
-        switch (state) {
-            case ProcessInstance.STATE_PENDING:
-                return ProcessStates.PENDING;
-            case ProcessInstance.STATE_ACTIVE:
-                return ProcessStates.ACTIVE;
-            case ProcessInstance.STATE_COMPLETED:
-                return ProcessStates.COMPLETED;
-            case ProcessInstance.STATE_ABORTED:
-                return ProcessStates.ABORTED;
-            case ProcessInstance.STATE_SUSPENDED:
-                return ProcessStates.SUSPENDED;
-            case ProcessInstance.STATE_ERROR:
-                return ProcessStates.ERROR;
-            default:
-                return ProcessStates.UNKNOWN;
         }
     }
 

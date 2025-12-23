@@ -30,6 +30,7 @@ import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlo
 public class OtelLogHandler extends Handler {
 
     private Level minimumLevel = Level.INFO;
+    private boolean shortMode = false;
 
     @Override
     public void publish(LogRecord record) {
@@ -37,14 +38,24 @@ public class OtelLogHandler extends Handler {
             return;
         }
 
-        Span currentSpan = Span.current();
-        if (currentSpan == null || !currentSpan.getSpanContext().isValid()) {
-            return;
-        }
-
         String formattedMessage = record.getMessage();
         if (record.getParameters() != null && record.getParameters().length > 0) {
             formattedMessage = String.format(formattedMessage, record.getParameters());
+        }
+
+        if (shortMode) {
+            OtelLogCollector.collect(
+                    record.getLevel().getName(),
+                    record.getLoggerName(),
+                    formattedMessage,
+                    Thread.currentThread().getName(),
+                    Thread.currentThread().getId());
+            return;
+        }
+
+        Span currentSpan = Span.current();
+        if (currentSpan == null || !currentSpan.getSpanContext().isValid()) {
+            return;
         }
 
         currentSpan.addEvent(Events.LOG_MESSAGE, Attributes.of(
@@ -69,5 +80,9 @@ public class OtelLogHandler extends Handler {
 
     public void setMinimumLevel(String levelName) {
         this.minimumLevel = Level.parse(levelName);
+    }
+
+    public void setShortMode(boolean shortMode) {
+        this.shortMode = shortMode;
     }
 }

@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.kie.kogito.quarkus.serverless.workflow.opentelemetry;
+package org.kie.kogito.quarkus.serverless.workflow.opentelemetry.common;
 
 import java.util.HashMap;
 import java.util.List;
@@ -84,36 +84,6 @@ public class HeaderContextExtractor {
                         context.put(key, sanitized);
                     }
                 });
-
-        return context;
-    }
-
-    /**
-     * Extract OpenTelemetry context from simple string headers (for testing).
-     *
-     * @param headers simple map of header name to value
-     * @return a map containing extracted context
-     */
-    public Map<String, String> extractContextFromHeaders(Map<String, String> headers) {
-        Map<String, String> context = new HashMap<>();
-
-        for (Map.Entry<String, String> entry : headers.entrySet()) {
-            String headerName = entry.getKey();
-            String headerValue = entry.getValue();
-
-            if (Headers.TRANSACTION_ID.equals(headerName)) {
-                String sanitized = sanitizeHeaderValue(headerValue);
-                if (sanitized != null) {
-                    context.put(RequestProperties.TRANSACTION_ID, sanitized);
-                }
-            } else if (headerName.startsWith(Headers.TRACKER_PREFIX)) {
-                String trackerKey = headerName.substring(Headers.TRACKER_PREFIX.length()).toLowerCase().replace('-', '.');
-                String sanitized = sanitizeHeaderValue(headerValue);
-                if (sanitized != null) {
-                    context.put(RequestProperties.TRACKER_PREFIX + trackerKey, sanitized);
-                }
-            }
-        }
 
         return context;
     }

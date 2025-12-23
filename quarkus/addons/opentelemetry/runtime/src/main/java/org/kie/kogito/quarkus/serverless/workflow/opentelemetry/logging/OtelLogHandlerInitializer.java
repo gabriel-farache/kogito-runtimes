@@ -22,26 +22,29 @@ import java.util.Arrays;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.config.SonataFlowOtelConfig;
+
 import io.quarkus.runtime.StartupEvent;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
+import jakarta.inject.Inject;
 
 @ApplicationScoped
 public class OtelLogHandlerInitializer {
 
     private static final OtelLogHandler handler = new OtelLogHandler();
 
+    @Inject
+    SonataFlowOtelConfig config;
+
     void onStart(@Observes StartupEvent ev) {
         Logger rootLogger = Logger.getLogger("");
         handler.setMinimumLevel("INFO");
         handler.setLevel(Level.INFO);
+        handler.setShortMode("short".equalsIgnoreCase(config.transition()));
         if (Arrays.stream(rootLogger.getHandlers()).noneMatch(h -> h instanceof OtelLogHandler)) {
             rootLogger.addHandler(handler);
         }
-
-        // Note: Kogito logs are automatically captured via root logger inheritance.
-        // Previously registered handler on "org.kie.kogito" logger caused duplication
-        // because the same handler processed logs at both levels due to propagation.
     }
 }

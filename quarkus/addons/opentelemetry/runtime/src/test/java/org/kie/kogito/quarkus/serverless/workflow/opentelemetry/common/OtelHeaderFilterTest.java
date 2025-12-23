@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.kie.kogito.quarkus.serverless.workflow.opentelemetry;
+package org.kie.kogito.quarkus.serverless.workflow.opentelemetry.common;
 
 import java.lang.reflect.Field;
 import java.util.Map;

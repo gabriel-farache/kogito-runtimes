@@ -16,12 +16,11 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.kie.kogito.quarkus.serverless.workflow.opentelemetry;
+package org.kie.kogito.quarkus.serverless.workflow.opentelemetry.common;
 
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -30,15 +29,12 @@ class MemoryLeakPreventionTest {
     @Test
     void shouldClearProcessContextsManually() {
         OtelContextHolder.setProcessStartContext("process-1", "transaction-1");
-        OtelContextHolder.setProcessCompletionContext("process-1", 1000L, "COMPLETED");
 
         assertEquals("transaction-1", OtelContextHolder.getProcessStartContext("process-1"));
-        assertNotNull(OtelContextHolder.getProcessCompletionContext("process-1"));
 
         OtelContextHolder.clearProcessContexts("process-1");
 
         assertNull(OtelContextHolder.getProcessStartContext("process-1"));
-        assertNull(OtelContextHolder.getProcessCompletionContext("process-1"));
     }
 
     @Test

@@ -16,12 +16,16 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.kie.kogito.quarkus.serverless.workflow.opentelemetry;
+package org.kie.kogito.quarkus.serverless.workflow.opentelemetry.common;
 
+import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+
+import jakarta.ws.rs.core.MultivaluedHashMap;
+import jakarta.ws.rs.core.MultivaluedMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -37,11 +41,17 @@ public class HeaderContextExtractorTest {
         extractor = new HeaderContextExtractor();
     }
 
+    private MultivaluedMap<String, String> toMultivaluedMap(Map<String, String> headers) {
+        MultivaluedMap<String, String> multivaluedMap = new MultivaluedHashMap<>();
+        headers.forEach((key, value) -> multivaluedMap.put(key, List.of(value)));
+        return multivaluedMap;
+    }
+
     @Test
     public void shouldExtractTransactionId() {
         Map<String, String> headers = Map.of("X-TRANSACTION-ID", "txn-12345");
 
-        Map<String, String> result = extractor.extractContextFromHeaders(headers);
+        Map<String, String> result = extractor.extractHeaders(toMultivaluedMap(headers));
 
         assertEquals("txn-12345", result.get("transaction.id"));
     }
@@ -52,7 +62,7 @@ public class HeaderContextExtractorTest {
                 "X-TRACKER-USER", "john.doe",
                 "X-TRACKER-SESSION", "sess-789");
 
-        Map<String, String> result = extractor.extractContextFromHeaders(headers);
+        Map<String, String> result = extractor.extractHeaders(toMultivaluedMap(headers));
 
         assertEquals("john.doe", result.get("tracker.user"));
         assertEquals("sess-789", result.get("tracker.session"));
@@ -66,7 +76,7 @@ public class HeaderContextExtractorTest {
                 "X-TRACKER-REQUEST-ID", "req-456",
                 "Content-Type", "application/json");
 
-        Map<String, String> result = extractor.extractContextFromHeaders(headers);
+        Map<String, String> result = extractor.extractHeaders(toMultivaluedMap(headers));
 
         assertEquals("txn-12345", result.get("transaction.id"));
         assertEquals("john.doe", result.get("tracker.user"));
@@ -80,16 +90,16 @@ public class HeaderContextExtractorTest {
                 "Content-Type", "application/json",
                 "Authorization", "Bearer token");
 
-        Map<String, String> result = extractor.extractContextFromHeaders(headers);
+        Map<String, String> result = extractor.extractHeaders(toMultivaluedMap(headers));
 
         assertTrue(result.isEmpty());
     }
 
     @Test
-    public void shouldApplySanitizationToExtractContextFromHeaders() {
+    public void shouldApplySanitizationToExtractHeaders() {
         Map<String, String> headers = Map.of("X-TRANSACTION-ID", "malicious\n\rinjection");
 
-        Map<String, String> result = extractor.extractContextFromHeaders(headers);
+        Map<String, String> result = extractor.extractHeaders(toMultivaluedMap(headers));
 
         String txnId = result.get("transaction.id");
         assertNotNull(txnId, "Transaction ID should be extracted");
@@ -98,11 +108,11 @@ public class HeaderContextExtractorTest {
     }
 
     @Test
-    public void shouldTruncateLongValuesInExtractContextFromHeaders() {
+    public void shouldTruncateLongValuesInExtractHeaders() {
         String longValue = "a".repeat(200);
         Map<String, String> headers = Map.of("X-TRANSACTION-ID", longValue);
 
-        Map<String, String> result = extractor.extractContextFromHeaders(headers);
+        Map<String, String> result = extractor.extractHeaders(toMultivaluedMap(headers));
 
         String txnId = result.get("transaction.id");
         assertNotNull(txnId, "Transaction ID should be extracted");

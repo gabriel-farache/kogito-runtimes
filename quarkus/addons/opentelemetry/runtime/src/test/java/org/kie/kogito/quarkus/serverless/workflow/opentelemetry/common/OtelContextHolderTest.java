@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.kie.kogito.quarkus.serverless.workflow.opentelemetry;
+package org.kie.kogito.quarkus.serverless.workflow.opentelemetry.common;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -168,23 +168,6 @@ public class OtelContextHolderTest {
                 "Process 1 context should be cleared");
         assertNotNull(OtelContextHolder.getRootContext(process2),
                 "Process 2 context should not be affected");
-    }
-
-    @Test
-    public void shouldHandlePopulateFromExtractedContextWithNullMap() {
-        assertDoesNotThrow(() -> OtelContextHolder.populateFromExtractedContext(null));
-    }
-
-    @Test
-    public void shouldHandlePopulateFromExtractedContextWithEmptyValues() {
-        OtelContextHolder.clear();
-
-        java.util.Map<String, String> context = new java.util.HashMap<>();
-        context.put("transaction.id", "");
-
-        OtelContextHolder.populateFromExtractedContext(context);
-
-        assertNull(OtelContextHolder.getTransactionId(), "Empty transaction ID should not be stored");
     }
 
     @Test

@@ -16,12 +16,14 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.kie.kogito.quarkus.serverless.workflow.opentelemetry;
+package org.kie.kogito.quarkus.serverless.workflow.opentelemetry.mode.nodespan;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes;
+import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.common.OtelContextHolder;
 import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.config.SonataFlowOtelConfig;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -30,6 +32,7 @@ import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlo
 import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.SONATAFLOW_TRANSACTION_ID;
 import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.SONATAFLOW_WORKFLOW_STATE;
 import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.when;
 
 public class NodeSpanManagerTest {
 
@@ -38,11 +41,10 @@ public class NodeSpanManagerTest {
         OtelContextHolder.clearRootContext("test-instance");
     }
 
-    private SonataFlowOtelConfig createMockConfig(boolean enabled, boolean spanEnabled) {
+    private SonataFlowOtelConfig createMockConfig(boolean spanEnabled) {
         SonataFlowOtelConfig mockConfig = mock(SonataFlowOtelConfig.class);
         SonataFlowOtelConfig.SpanConfig mockSpanConfig = mock(SonataFlowOtelConfig.SpanConfig.class);
 
-        when(mockConfig.enabled()).thenReturn(enabled);
         when(mockConfig.serviceName()).thenReturn("kogito-workflow-service");
         when(mockConfig.serviceVersion()).thenReturn("unknown");
         when(mockConfig.spans()).thenReturn(mockSpanConfig);
@@ -68,7 +70,7 @@ public class NodeSpanManagerTest {
     @Test
     public void shouldReturnNullWhenSpansDisabled() throws Exception {
         io.opentelemetry.api.trace.Tracer mockTracer = mock(io.opentelemetry.api.trace.Tracer.class);
-        SonataFlowOtelConfig mockConfig = createMockConfig(true, false);
+        SonataFlowOtelConfig mockConfig = createMockConfig(false);
         NodeSpanManager spanManager = new NodeSpanManager(mockTracer, mockConfig);
 
         io.opentelemetry.api.trace.Span result = spanManager.createNodeSpan("test", "test", "1.0", "ACTIVE", "TestNode", null, null);
@@ -80,7 +82,7 @@ public class NodeSpanManagerTest {
     public void shouldAddProcessEventToSpan() throws Exception {
         io.opentelemetry.api.trace.Tracer mockTracer = mock(io.opentelemetry.api.trace.Tracer.class);
         io.opentelemetry.api.trace.Span mockSpan = mock(io.opentelemetry.api.trace.Span.class);
-        SonataFlowOtelConfig mockConfig = createMockConfig(true, true);
+        SonataFlowOtelConfig mockConfig = createMockConfig(true);
 
         setupMockSpanBuilder(mockTracer, mockSpan);
 
@@ -90,14 +92,14 @@ public class NodeSpanManagerTest {
         spanManager.addProcessEvent(span, "process.started", "Process execution started");
 
         verify(mockSpan).addEvent("process.started", io.opentelemetry.api.common.Attributes.of(
-                EVENT_DESCRIPTION, "Process execution started"));
+                SonataFlowOtelAttributes.EVENT_DESCRIPTION, "Process execution started"));
     }
 
     @Test
     public void shouldSetSpanStatusOnError() throws Exception {
         io.opentelemetry.api.trace.Tracer mockTracer = mock(io.opentelemetry.api.trace.Tracer.class);
         io.opentelemetry.api.trace.Span mockSpan = mock(io.opentelemetry.api.trace.Span.class);
-        SonataFlowOtelConfig mockConfig = createMockConfig(true, true);
+        SonataFlowOtelConfig mockConfig = createMockConfig(true);
 
         setupMockSpanBuilder(mockTracer, mockSpan);
 
@@ -114,7 +116,7 @@ public class NodeSpanManagerTest {
     public void shouldCorrelateSpanWithHeaderContext() throws Exception {
         io.opentelemetry.api.trace.Tracer mockTracer = mock(io.opentelemetry.api.trace.Tracer.class);
         io.opentelemetry.api.trace.Span mockSpan = mock(io.opentelemetry.api.trace.Span.class);
-        SonataFlowOtelConfig mockConfig = createMockConfig(true, true);
+        SonataFlowOtelConfig mockConfig = createMockConfig(true);
 
         setupMockSpanBuilder(mockTracer, mockSpan);
 
@@ -136,7 +138,7 @@ public class NodeSpanManagerTest {
         io.opentelemetry.api.trace.Tracer mockTracer = mock(io.opentelemetry.api.trace.Tracer.class);
         io.opentelemetry.api.trace.Span mockSpan = mock(io.opentelemetry.api.trace.Span.class);
         io.opentelemetry.api.trace.SpanBuilder mockSpanBuilder = setupMockSpanBuilder(mockTracer, mockSpan);
-        SonataFlowOtelConfig mockConfig = createMockConfig(true, true);
+        SonataFlowOtelConfig mockConfig = createMockConfig(true);
 
         NodeSpanManager spanManager = new NodeSpanManager(mockTracer, mockConfig);
 
@@ -152,7 +154,7 @@ public class NodeSpanManagerTest {
         io.opentelemetry.api.trace.Tracer mockTracer = mock(io.opentelemetry.api.trace.Tracer.class);
         io.opentelemetry.api.trace.Span mockSpan = mock(io.opentelemetry.api.trace.Span.class);
         setupMockSpanBuilder(mockTracer, mockSpan);
-        SonataFlowOtelConfig mockConfig = createMockConfig(true, true);
+        SonataFlowOtelConfig mockConfig = createMockConfig(true);
 
         NodeSpanManager spanManager = new NodeSpanManager(mockTracer, mockConfig);
 
@@ -171,7 +173,7 @@ public class NodeSpanManagerTest {
     public void shouldCreateNodeSpanWithCorrectAttributes() throws Exception {
         io.opentelemetry.api.trace.Tracer mockTracer = mock(io.opentelemetry.api.trace.Tracer.class);
         io.opentelemetry.api.trace.Span mockSpan = mock(io.opentelemetry.api.trace.Span.class);
-        SonataFlowOtelConfig mockConfig = createMockConfig(true, true);
+        SonataFlowOtelConfig mockConfig = createMockConfig(true);
 
         io.opentelemetry.api.trace.SpanBuilder mockSpanBuilder = setupMockSpanBuilder(mockTracer, mockSpan);
 
@@ -186,7 +188,7 @@ public class NodeSpanManagerTest {
     public void shouldGetActiveNodeSpan() throws Exception {
         io.opentelemetry.api.trace.Tracer mockTracer = mock(io.opentelemetry.api.trace.Tracer.class);
         io.opentelemetry.api.trace.Span mockSpan = mock(io.opentelemetry.api.trace.Span.class);
-        SonataFlowOtelConfig mockConfig = createMockConfig(true, true);
+        SonataFlowOtelConfig mockConfig = createMockConfig(true);
 
         setupMockSpanBuilder(mockTracer, mockSpan);
 
@@ -204,7 +206,7 @@ public class NodeSpanManagerTest {
     public void shouldBuildCorrectSpanKey() throws Exception {
         io.opentelemetry.api.trace.Tracer mockTracer = mock(io.opentelemetry.api.trace.Tracer.class);
         io.opentelemetry.api.trace.Span mockSpan = mock(io.opentelemetry.api.trace.Span.class);
-        SonataFlowOtelConfig mockConfig = createMockConfig(true, true);
+        SonataFlowOtelConfig mockConfig = createMockConfig(true);
 
         setupMockSpanBuilder(mockTracer, mockSpan);
 
@@ -220,7 +222,7 @@ public class NodeSpanManagerTest {
     public void shouldCompleteNodeSpanByProcessAndNodeId() throws Exception {
         io.opentelemetry.api.trace.Tracer mockTracer = mock(io.opentelemetry.api.trace.Tracer.class);
         io.opentelemetry.api.trace.Span mockSpan = mock(io.opentelemetry.api.trace.Span.class);
-        SonataFlowOtelConfig mockConfig = createMockConfig(true, true);
+        SonataFlowOtelConfig mockConfig = createMockConfig(true);
 
         setupMockSpanBuilder(mockTracer, mockSpan);
 
@@ -240,7 +242,7 @@ public class NodeSpanManagerTest {
     @Test
     public void shouldHandleCompleteNodeSpanForNonExistentSpan() throws Exception {
         io.opentelemetry.api.trace.Tracer mockTracer = mock(io.opentelemetry.api.trace.Tracer.class);
-        SonataFlowOtelConfig mockConfig = createMockConfig(true, true);
+        SonataFlowOtelConfig mockConfig = createMockConfig(true);
 
         NodeSpanManager spanManager = new NodeSpanManager(mockTracer, mockConfig);
 
@@ -255,7 +257,7 @@ public class NodeSpanManagerTest {
         io.opentelemetry.api.trace.Tracer mockTracer = mock(io.opentelemetry.api.trace.Tracer.class);
         io.opentelemetry.api.trace.Span mockSpan = mock(io.opentelemetry.api.trace.Span.class);
         io.opentelemetry.api.trace.SpanBuilder mockSpanBuilder = setupMockSpanBuilder(mockTracer, mockSpan);
-        SonataFlowOtelConfig mockConfig = createMockConfig(true, true);
+        SonataFlowOtelConfig mockConfig = createMockConfig(true);
 
         NodeSpanManager spanManager = new NodeSpanManager(mockTracer, mockConfig);
 
@@ -270,7 +272,7 @@ public class NodeSpanManagerTest {
         io.opentelemetry.api.trace.Tracer mockTracer = mock(io.opentelemetry.api.trace.Tracer.class);
         io.opentelemetry.api.trace.Span mockSpan = mock(io.opentelemetry.api.trace.Span.class);
         io.opentelemetry.api.trace.SpanBuilder mockSpanBuilder = setupMockSpanBuilder(mockTracer, mockSpan);
-        SonataFlowOtelConfig mockConfig = createMockConfig(true, true);
+        SonataFlowOtelConfig mockConfig = createMockConfig(true);
 
         NodeSpanManager spanManager = new NodeSpanManager(mockTracer, mockConfig);
 
@@ -284,7 +286,7 @@ public class NodeSpanManagerTest {
         io.opentelemetry.api.trace.Tracer mockTracer = mock(io.opentelemetry.api.trace.Tracer.class);
         io.opentelemetry.api.trace.Span mockSpan = mock(io.opentelemetry.api.trace.Span.class);
         io.opentelemetry.api.trace.SpanBuilder mockSpanBuilder = setupMockSpanBuilder(mockTracer, mockSpan);
-        SonataFlowOtelConfig mockConfig = createMockConfig(true, true);
+        SonataFlowOtelConfig mockConfig = createMockConfig(true);
 
         NodeSpanManager spanManager = new NodeSpanManager(mockTracer, mockConfig);
 
@@ -298,7 +300,7 @@ public class NodeSpanManagerTest {
         io.opentelemetry.api.trace.Tracer mockTracer = mock(io.opentelemetry.api.trace.Tracer.class);
         io.opentelemetry.api.trace.Span mockSpan = mock(io.opentelemetry.api.trace.Span.class);
         io.opentelemetry.api.trace.SpanBuilder mockSpanBuilder = setupMockSpanBuilder(mockTracer, mockSpan);
-        SonataFlowOtelConfig mockConfig = createMockConfig(true, true);
+        SonataFlowOtelConfig mockConfig = createMockConfig(true);
 
         NodeSpanManager spanManager = new NodeSpanManager(mockTracer, mockConfig);
 
@@ -312,7 +314,7 @@ public class NodeSpanManagerTest {
         io.opentelemetry.api.trace.Tracer mockTracer = mock(io.opentelemetry.api.trace.Tracer.class);
         io.opentelemetry.api.trace.Span mockSpan = mock(io.opentelemetry.api.trace.Span.class);
         io.opentelemetry.api.trace.SpanBuilder mockSpanBuilder = setupMockSpanBuilder(mockTracer, mockSpan);
-        SonataFlowOtelConfig mockConfig = createMockConfig(true, true);
+        SonataFlowOtelConfig mockConfig = createMockConfig(true);
 
         io.opentelemetry.context.Context httpContext = io.opentelemetry.context.Context.current();
         OtelContextHolder.setHttpRequestContext(httpContext);
@@ -330,21 +332,43 @@ public class NodeSpanManagerTest {
     }
 
     @Test
-    public void shouldNotPolluteContextCurrentWhenCreatingSpans() throws Exception {
+    public void shouldMakeSpanCurrentForLogCapture() throws Exception {
         io.opentelemetry.api.trace.Tracer mockTracer = mock(io.opentelemetry.api.trace.Tracer.class);
         io.opentelemetry.api.trace.Span mockSpan = mock(io.opentelemetry.api.trace.Span.class);
-        setupMockSpanBuilder(mockTracer, mockSpan);
-        SonataFlowOtelConfig mockConfig = createMockConfig(true, true);
+        io.opentelemetry.context.Scope mockScope = mock(io.opentelemetry.context.Scope.class);
+        io.opentelemetry.api.trace.SpanBuilder mockSpanBuilder = mock(io.opentelemetry.api.trace.SpanBuilder.class, org.mockito.Mockito.RETURNS_SELF);
 
-        io.opentelemetry.context.Context contextBefore = io.opentelemetry.context.Context.current();
+        when(mockTracer.spanBuilder(org.mockito.ArgumentMatchers.anyString())).thenReturn(mockSpanBuilder);
+        when(mockSpanBuilder.startSpan()).thenReturn(mockSpan);
+        when(mockSpan.makeCurrent()).thenReturn(mockScope);
+
+        SonataFlowOtelConfig mockConfig = createMockConfig(true);
 
         NodeSpanManager spanManager = new NodeSpanManager(mockTracer, mockConfig);
         spanManager.createNodeSpan("test-instance", "test-process", "1.0", "ACTIVE", "Node1", null, null);
 
-        io.opentelemetry.context.Context contextAfter = io.opentelemetry.context.Context.current();
+        verify(mockSpan).makeCurrent();
+    }
 
-        org.junit.jupiter.api.Assertions.assertEquals(contextBefore, contextAfter,
-                "Context.current() should not be modified by span creation (no makeCurrent pollution)");
+    @Test
+    public void shouldCloseScopeWhenSpanEnds() throws Exception {
+        io.opentelemetry.api.trace.Tracer mockTracer = mock(io.opentelemetry.api.trace.Tracer.class);
+        io.opentelemetry.api.trace.Span mockSpan = mock(io.opentelemetry.api.trace.Span.class);
+        io.opentelemetry.context.Scope mockScope = mock(io.opentelemetry.context.Scope.class);
+        io.opentelemetry.api.trace.SpanBuilder mockSpanBuilder = mock(io.opentelemetry.api.trace.SpanBuilder.class, org.mockito.Mockito.RETURNS_SELF);
+
+        when(mockTracer.spanBuilder(org.mockito.ArgumentMatchers.anyString())).thenReturn(mockSpanBuilder);
+        when(mockSpanBuilder.startSpan()).thenReturn(mockSpan);
+        when(mockSpan.makeCurrent()).thenReturn(mockScope);
+
+        SonataFlowOtelConfig mockConfig = createMockConfig(true);
+
+        NodeSpanManager spanManager = new NodeSpanManager(mockTracer, mockConfig);
+        spanManager.createNodeSpan("test-instance", "test-process", "1.0", "ACTIVE", "Node1", null, null);
+
+        spanManager.completeNodeSpan("test-instance", "Node1");
+
+        verify(mockScope).close();
     }
 
     @Test
@@ -352,7 +376,7 @@ public class NodeSpanManagerTest {
         io.opentelemetry.api.trace.Tracer mockTracer = mock(io.opentelemetry.api.trace.Tracer.class);
         io.opentelemetry.api.trace.Span mockSpan = mock(io.opentelemetry.api.trace.Span.class);
         io.opentelemetry.api.trace.SpanBuilder mockSpanBuilder = setupMockSpanBuilder(mockTracer, mockSpan);
-        SonataFlowOtelConfig mockConfig = createMockConfig(true, true);
+        SonataFlowOtelConfig mockConfig = createMockConfig(true);
 
         io.opentelemetry.context.Context storedRootContext = io.opentelemetry.context.Context.current();
         OtelContextHolder.setRootContext("test-instance", storedRootContext);
@@ -375,7 +399,7 @@ public class NodeSpanManagerTest {
     @Test
     public void shouldReturnNullWhenGetLastActiveSpanCalledWithNoSpans() {
         io.opentelemetry.api.trace.Tracer mockTracer = mock(io.opentelemetry.api.trace.Tracer.class);
-        SonataFlowOtelConfig mockConfig = createMockConfig(true, true);
+        SonataFlowOtelConfig mockConfig = createMockConfig(true);
         NodeSpanManager spanManager = new NodeSpanManager(mockTracer, mockConfig);
 
         org.junit.jupiter.api.Assertions.assertNull(spanManager.getLastActiveSpan("non-existent-instance"),
@@ -385,7 +409,7 @@ public class NodeSpanManagerTest {
     @Test
     public void shouldReturnNullWhenGetAnyActiveSpanCalledWithNoSpans() {
         io.opentelemetry.api.trace.Tracer mockTracer = mock(io.opentelemetry.api.trace.Tracer.class);
-        SonataFlowOtelConfig mockConfig = createMockConfig(true, true);
+        SonataFlowOtelConfig mockConfig = createMockConfig(true);
         NodeSpanManager spanManager = new NodeSpanManager(mockTracer, mockConfig);
 
         org.junit.jupiter.api.Assertions.assertNull(spanManager.getAnyActiveSpan("non-existent-instance"),
@@ -397,7 +421,7 @@ public class NodeSpanManagerTest {
         io.opentelemetry.api.trace.Tracer mockTracer = mock(io.opentelemetry.api.trace.Tracer.class);
         io.opentelemetry.api.trace.Span mockSpan = mock(io.opentelemetry.api.trace.Span.class);
         setupMockSpanBuilder(mockTracer, mockSpan);
-        SonataFlowOtelConfig mockConfig = createMockConfig(true, true);
+        SonataFlowOtelConfig mockConfig = createMockConfig(true);
 
         NodeSpanManager spanManager = new NodeSpanManager(mockTracer, mockConfig);
         spanManager.createNodeSpan("test-instance", "test-process", "1.0", "ACTIVE", "Node1", null, null);

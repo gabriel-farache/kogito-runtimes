@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.kie.kogito.quarkus.serverless.workflow.opentelemetry;
+package org.kie.kogito.quarkus.serverless.workflow.opentelemetry.mode.nodespan;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -26,6 +26,7 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.common.OtelContextHolder;
 import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.config.SonataFlowOtelConfig;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -33,6 +34,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanBuilder;
 import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.context.Scope;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -41,16 +43,14 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * Test suite verifying NodeSpanManager's scope-less design prevents context pollution.
+ * Test suite verifying NodeSpanManager's proper scope lifecycle management.
  *
- * The scope-less design was implemented to prevent Context.current() pollution that
- * caused incorrect span parent-child relationships when workflows resume after restart.
- * By NOT calling span.makeCurrent(), we avoid polluting the thread-local context and
- * ensure all spans use the correct parent (HTTP request span captured at request entry).
+ * The NodeSpanManager calls span.makeCurrent() to enable log capture via Span.current(),
+ * and properly closes the scope when spans end to restore context.
  *
  * These tests verify:
- * 1. Spans are created and stored correctly without calling makeCurrent()
- * 2. Cleanup properly ends all spans
+ * 1. Spans are created with proper scope management
+ * 2. Cleanup properly ends all spans and closes scopes
  * 3. Concurrent access is handled safely
  * 4. Exception handling properly cleans up resources
  */
@@ -70,7 +70,6 @@ public class NodeSpanManagerScopeLeakTest {
 
     @BeforeEach
     public void setUp() {
-        when(mockConfig.enabled()).thenReturn(true);
         when(mockConfig.serviceName()).thenReturn("test-service");
         when(mockConfig.serviceVersion()).thenReturn("1.0");
         when(mockConfig.spans()).thenReturn(mockSpanConfig);
@@ -90,8 +89,10 @@ public class NodeSpanManagerScopeLeakTest {
 
     private SpanBuilder setupMockSpanBuilder(Span mockSpan) {
         SpanBuilder mockSpanBuilder = mock(SpanBuilder.class, org.mockito.Mockito.RETURNS_SELF);
+        Scope mockScope = mock(Scope.class);
         when(mockTracer.spanBuilder(anyString())).thenReturn(mockSpanBuilder);
         when(mockSpanBuilder.startSpan()).thenReturn(mockSpan);
+        when(mockSpan.makeCurrent()).thenReturn(mockScope);
         return mockSpanBuilder;
     }
 
@@ -160,10 +161,14 @@ public class NodeSpanManagerScopeLeakTest {
     public void shouldCleanupAllSpansOnApplicationShutdown() {
         Span mockSpan1 = mock(Span.class);
         Span mockSpan2 = mock(Span.class);
+        Scope mockScope1 = mock(Scope.class);
+        Scope mockScope2 = mock(Scope.class);
         SpanBuilder mockSpanBuilder = mock(SpanBuilder.class, org.mockito.Mockito.RETURNS_SELF);
 
         when(mockTracer.spanBuilder(anyString())).thenReturn(mockSpanBuilder);
         when(mockSpanBuilder.startSpan()).thenReturn(mockSpan1, mockSpan2);
+        when(mockSpan1.makeCurrent()).thenReturn(mockScope1);
+        when(mockSpan2.makeCurrent()).thenReturn(mockScope2);
 
         assertThat(spanManager.getActiveScopeCount()).isZero();
 
@@ -218,10 +223,14 @@ public class NodeSpanManagerScopeLeakTest {
 
         Span mockSpan1 = mock(Span.class);
         Span mockSpan2 = mock(Span.class);
+        Scope mockScope1 = mock(Scope.class);
+        Scope mockScope2 = mock(Scope.class);
 
         SpanBuilder mockSpanBuilder = mock(SpanBuilder.class, org.mockito.Mockito.RETURNS_SELF);
         when(mockTracer.spanBuilder(anyString())).thenReturn(mockSpanBuilder);
         when(mockSpanBuilder.startSpan()).thenReturn(mockSpan1, mockSpan2);
+        when(mockSpan1.makeCurrent()).thenReturn(mockScope1);
+        when(mockSpan2.makeCurrent()).thenReturn(mockScope2);
 
         assertThat(spanManager.getActiveScopeCount()).isZero();
 

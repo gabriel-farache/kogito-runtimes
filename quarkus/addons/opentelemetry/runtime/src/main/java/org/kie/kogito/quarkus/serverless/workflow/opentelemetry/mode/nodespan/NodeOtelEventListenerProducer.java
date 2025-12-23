@@ -16,14 +16,14 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.kie.kogito.quarkus.serverless.workflow.opentelemetry;
+package org.kie.kogito.quarkus.serverless.workflow.opentelemetry.mode.nodespan;
 
 import org.kie.kogito.internal.process.event.KogitoProcessEventListener;
+import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.common.HeaderContextExtractor;
 import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.config.SonataFlowOtelConfig;
+import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.mode.processspan.NoOpKogitoProcessEventListener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import io.quarkus.arc.properties.IfBuildProperty;
 
 import jakarta.enterprise.context.Dependent;
 import jakarta.enterprise.inject.Produces;
@@ -34,12 +34,12 @@ import jakarta.inject.Inject;
  *
  * This factory is responsible for creating and configuring the NodeOtelEventListener
  * as a KogitoProcessEventListener so it gets automatically registered with the process engine.
- * The listener will only be produced when OpenTelemetry is enabled.
+ * The listener will only be active when using long transition mode.
  */
 @Dependent
-public class OtelEventListenerFactory {
+public class NodeOtelEventListenerProducer {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(OtelEventListenerFactory.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(NodeOtelEventListenerProducer.class);
 
     @Inject
     NodeSpanManager spanManager;
@@ -53,14 +53,18 @@ public class OtelEventListenerFactory {
     /**
      * Produces the NodeOtelEventListener as a KogitoProcessEventListener.
      * This ensures it gets automatically registered with the Kogito process engine.
-     * The listener is only produced when OpenTelemetry is enabled.
+     * The listener is active in long transition mode (default) and inactive in short mode.
      *
      * @return the NodeOtelEventListener for process monitoring
      */
     @Produces
-    @IfBuildProperty(name = "sonataflow.otel.enabled", stringValue = "true", enableIfMissing = true)
     public KogitoProcessEventListener produceOtelEventListener() {
-        LOGGER.info("Producing NodeOtelEventListener for process monitoring");
-        return new NodeOtelEventListener(spanManager, config, headerExtractor);
+        if (!config.isShortTransitionMode()) {
+            LOGGER.info("Producing NodeOtelEventListener for long transition mode");
+            return new NodeOtelEventListener(spanManager, config, headerExtractor);
+        } else {
+            LOGGER.debug("Producing no-op listener - using short transition mode");
+            return new NoOpKogitoProcessEventListener();
+        }
     }
 }

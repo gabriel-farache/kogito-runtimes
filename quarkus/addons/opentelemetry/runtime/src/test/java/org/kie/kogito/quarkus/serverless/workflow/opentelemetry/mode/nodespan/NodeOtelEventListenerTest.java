@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.kie.kogito.quarkus.serverless.workflow.opentelemetry;
+package org.kie.kogito.quarkus.serverless.workflow.opentelemetry.mode.nodespan;
 
 import java.util.HashMap;
 
@@ -28,6 +28,7 @@ import org.kie.kogito.internal.process.event.KogitoProcessEventListener;
 import org.kie.kogito.internal.process.runtime.KogitoNodeInstance;
 import org.kie.kogito.internal.process.runtime.KogitoProcessInstance;
 import org.kie.kogito.process.ProcessInstance;
+import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.common.HeaderContextExtractor;
 import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.config.SonataFlowOtelConfig;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;

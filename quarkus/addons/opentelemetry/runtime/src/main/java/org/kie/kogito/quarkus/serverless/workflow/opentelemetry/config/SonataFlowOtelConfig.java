@@ -24,8 +24,12 @@ import io.smallrye.config.WithDefault;
 @ConfigMapping(prefix = "sonataflow.otel")
 public interface SonataFlowOtelConfig {
 
-    @WithDefault("true")
-    boolean enabled();
+    @WithDefault("")
+    String transition();
+
+    default boolean isShortTransitionMode() {
+        return "short".equals(transition());
+    }
 
     @WithDefault("${quarkus.application.name:kogito-workflow-service}")
     String serviceName();

@@ -16,60 +16,52 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.kie.kogito.quarkus.serverless.workflow.opentelemetry;
+package org.kie.kogito.quarkus.serverless.workflow.opentelemetry.mode.nodespan;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
 
+import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.AbstractSpanManager;
+import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes;
+import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.common.OtelContextHolder;
 import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.config.SonataFlowOtelConfig;
+import org.kie.kogito.quarkus.serverless.workflow.opentelemetry.util.SpanAttributeApplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.common.annotations.VisibleForTesting;
 
-import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Context;
+import io.opentelemetry.context.Scope;
 
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
-import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.EVENT_DESCRIPTION;
-import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.RequestProperties;
-import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.SERVICE_NAME;
-import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.SERVICE_VERSION;
-import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.SONATAFLOW_PARENT_PROCESS_INSTANCE_ID;
-import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.SONATAFLOW_PROCESS_ID;
-import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.SONATAFLOW_PROCESS_INSTANCE_ID;
-import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.SONATAFLOW_PROCESS_INSTANCE_NODE;
-import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.SONATAFLOW_PROCESS_INSTANCE_STATE;
-import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.SONATAFLOW_PROCESS_VERSION;
-import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.SONATAFLOW_TRANSACTION_ID;
-import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.SONATAFLOW_WORKFLOW_STATE;
 import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.SpanNames;
-import static org.kie.kogito.quarkus.serverless.workflow.opentelemetry.SonataFlowOtelAttributes.TrackerAttributes;
 
 @ApplicationScoped
-public class NodeSpanManager {
+public class NodeSpanManager extends AbstractSpanManager {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(NodeSpanManager.class);
-    private final Tracer tracer;
-    private final SonataFlowOtelConfig config;
     private final Map<String, ScopeManager> activeScopeManagers = new ConcurrentHashMap<>();
     private final Map<String, Span> lastActiveNodeSpan = new ConcurrentHashMap<>();
 
-    @Inject
-    public NodeSpanManager(Tracer tracer, SonataFlowOtelConfig config) {
-        this.tracer = tracer;
-        this.config = config;
+    protected NodeSpanManager() {
+        super();
     }
 
-    record ScopeManager(Span span, String spanKey) implements AutoCloseable {
+    @Inject
+    public NodeSpanManager(Tracer tracer, SonataFlowOtelConfig config) {
+        super(tracer, config);
+    }
+
+    record ScopeManager(Span span, Scope scope, String spanKey) implements AutoCloseable {
 
         void endWithStatus(StatusCode statusCode, String description) {
             try {
@@ -79,9 +71,20 @@ public class NodeSpanManager {
                     span.setStatus(statusCode);
                 }
                 span.end();
+                closeScope();
             } catch (Exception e) {
                 LOGGER.error("Error ending span for {}", spanKey, e);
                 close();
+            }
+        }
+
+        private void closeScope() {
+            if (scope != null) {
+                try {
+                    scope.close();
+                } catch (Exception e) {
+                    LOGGER.debug("Error closing scope for {}", spanKey, e);
+                }
             }
         }
 
@@ -90,11 +93,8 @@ public class NodeSpanManager {
             if (span != null) {
                 span.end();
             }
+            closeScope();
         }
-    }
-
-    private boolean isSpanCreationEnabled() {
-        return config.enabled() && config.spans().enabled();
     }
 
     private void registerScopeManager(ScopeManager scopeManager, String spanKey) {
@@ -104,30 +104,6 @@ public class NodeSpanManager {
             LOGGER.debug("Replaced previous span for {}", spanKey);
         }
         LOGGER.debug("Registered span for {}", spanKey);
-    }
-
-    public void addProcessEvent(Span span, String eventName, String description) {
-        if (span != null) {
-            if (description != null) {
-                Attributes eventAttributes = Attributes.of(
-                        EVENT_DESCRIPTION, description);
-                span.addEvent(eventName, eventAttributes);
-            } else {
-                span.addEvent(eventName);
-            }
-            LOGGER.debug("Added event {} to span", eventName);
-        } else {
-            LOGGER.debug("Cannot add event {} - span is null", eventName);
-        }
-    }
-
-    public void addProcessEvent(Span span, String eventName, Attributes attributes) {
-        if (span != null) {
-            span.addEvent(eventName, attributes);
-            LOGGER.debug("Added process event {} to span", eventName);
-        } else {
-            LOGGER.debug("Cannot add event {} - span is null", eventName);
-        }
     }
 
     public Span getLastActiveSpan(String processInstanceId) {
@@ -177,15 +153,6 @@ public class NodeSpanManager {
         return entry -> entry.getKey().startsWith(prefix);
     }
 
-    public void setSpanError(Span span, Throwable exception, String description) {
-        if (span != null) {
-            span.setStatus(StatusCode.ERROR, description);
-            if (exception != null) {
-                span.recordException(exception);
-            }
-        }
-    }
-
     public Span createNodeSpan(String processInstanceId, String processId, String processVersion,
             String processState, String nodeId, String stateName, String parentProcessInstanceId) {
         if (!isSpanCreationEnabled()) {
@@ -201,7 +168,8 @@ public class NodeSpanManager {
             spanKey = buildSpanKey(processInstanceId, nodeId);
             Span span = buildSpan(processInstanceId, processId, processVersion, processState, nodeId, stateName, parentProcessInstanceId, parentContext);
 
-            scopeManager = new ScopeManager(span, spanKey);
+            Scope scope = span.makeCurrent();
+            scopeManager = new ScopeManager(span, scope, spanKey);
             registerScopeManager(scopeManager, spanKey);
 
             lastActiveNodeSpan.put(processInstanceId, span);
@@ -249,22 +217,12 @@ public class NodeSpanManager {
 
         var spanBuilder = tracer.spanBuilder(spanName)
                 .setParent(parentContext)
-                .setSpanKind(SpanKind.INTERNAL)
-                .setAttribute(SONATAFLOW_PROCESS_INSTANCE_ID, processInstanceId)
-                .setAttribute(SONATAFLOW_PROCESS_ID, processId)
-                .setAttribute(SONATAFLOW_PROCESS_VERSION, processVersion)
-                .setAttribute(SONATAFLOW_PROCESS_INSTANCE_STATE, processState)
-                .setAttribute(SERVICE_NAME, config.serviceName())
-                .setAttribute(SERVICE_VERSION, config.serviceVersion())
-                .setAttribute(SONATAFLOW_PROCESS_INSTANCE_NODE, nodeId);
+                .setSpanKind(SpanKind.INTERNAL);
 
-        if (stateName != null && !stateName.isEmpty()) {
-            spanBuilder.setAttribute(SONATAFLOW_WORKFLOW_STATE, stateName);
-        }
-
-        if (parentProcessInstanceId != null && !parentProcessInstanceId.isEmpty()) {
-            spanBuilder.setAttribute(SONATAFLOW_PARENT_PROCESS_INSTANCE_ID, parentProcessInstanceId);
-        }
+        SpanAttributeApplier.applyCommonAttributes(spanBuilder, processInstanceId, processId, processVersion, processState, config);
+        SpanAttributeApplier.applyNodeAttribute(spanBuilder, nodeId);
+        SpanAttributeApplier.applyOptionalWorkflowState(spanBuilder, stateName);
+        SpanAttributeApplier.applyOptionalParentProcessId(spanBuilder, parentProcessInstanceId);
 
         return spanBuilder.startSpan();
     }
@@ -273,26 +231,7 @@ public class NodeSpanManager {
             String processState, String nodeId, String stateName, String parentProcessInstanceId, Map<String, String> headerContext) {
         Span span = createNodeSpan(processInstanceId, processId, processVersion, processState, nodeId, stateName, parentProcessInstanceId);
 
-        if (span != null) {
-            String transactionId = null;
-
-            if (headerContext != null && !headerContext.isEmpty()) {
-                transactionId = headerContext.get(RequestProperties.TRANSACTION_ID);
-
-                for (Map.Entry<String, String> entry : headerContext.entrySet()) {
-                    if (entry.getKey().startsWith(RequestProperties.TRACKER_PREFIX)) {
-                        String attributeKey = TrackerAttributes.createTrackerAttributeKey(entry.getKey());
-                        span.setAttribute(attributeKey, entry.getValue());
-                    }
-                }
-            }
-
-            if (transactionId == null) {
-                transactionId = processInstanceId;
-            }
-
-            span.setAttribute(SONATAFLOW_TRANSACTION_ID, transactionId);
-        }
+        SpanAttributeApplier.applyHeaderContext(span, headerContext, processInstanceId);
 
         return span;
     }
@@ -307,16 +246,6 @@ public class NodeSpanManager {
     boolean hasActiveScope(String processInstanceId, String nodeId) {
         String spanKey = buildSpanKey(processInstanceId, nodeId);
         return activeScopeManagers.containsKey(spanKey);
-    }
-
-    public void completeNodeSpan(Object event) {
-        if (!(event instanceof org.kie.api.event.process.ProcessNodeLeftEvent nodeLeftEvent)) {
-            return;
-        }
-
-        String processInstanceId = nodeLeftEvent.getProcessInstance().getId();
-        String nodeId = nodeLeftEvent.getNodeInstance().getNodeName();
-        completeNodeSpan(processInstanceId, nodeId);
     }
 
     public void completeNodeSpan(String processInstanceId, String nodeId) {
@@ -340,6 +269,7 @@ public class NodeSpanManager {
     }
 
     @PreDestroy
+    @Override
     public void cleanup() {
         int spanCount = activeScopeManagers.size();
         if (spanCount > 0) {

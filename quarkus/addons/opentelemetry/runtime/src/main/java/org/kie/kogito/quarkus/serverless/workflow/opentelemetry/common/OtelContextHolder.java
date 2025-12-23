@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.kie.kogito.quarkus.serverless.workflow.opentelemetry;
+package org.kie.kogito.quarkus.serverless.workflow.opentelemetry.common;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -47,13 +47,9 @@ public class OtelContextHolder {
     private static final int MAX_CONTEXT_SIZE = 100;
 
     private static final Map<String, TimestampedValue<String>> processStartContexts = new ConcurrentHashMap<>();
-    private static final Map<String, TimestampedValue<ProcessCompletionContext>> processCompletionContexts = new ConcurrentHashMap<>();
     private static final Map<String, TimestampedValue<Context>> rootContexts = new ConcurrentHashMap<>();
 
     private static final ThreadLocal<Context> httpRequestContext = new ThreadLocal<>();
-
-    public record ProcessCompletionContext(long durationMs, String outcome) {
-    }
 
     private record TimestampedValue<T> (T value, LocalDateTime timestamp) {
     }
@@ -132,34 +128,6 @@ public class OtelContextHolder {
     }
 
     /**
-     * Populate MDC with OpenTelemetry context from extracted context map.
-     * Used to establish context for subflows that have headers but no MDC context.
-     *
-     * @param extractedContext map with transaction.id and tracker.* keys (RequestProperties format)
-     */
-    public static void populateFromExtractedContext(Map<String, String> extractedContext) {
-        if (extractedContext == null || extractedContext.isEmpty()) {
-            return;
-        }
-
-        for (Map.Entry<String, String> entry : extractedContext.entrySet()) {
-            String key = entry.getKey();
-            String value = entry.getValue();
-
-            if (value == null || value.isEmpty()) {
-                continue;
-            }
-
-            if (RequestProperties.TRANSACTION_ID.equals(key)) {
-                setTransactionId(value);
-            } else if (key.startsWith(RequestProperties.TRACKER_PREFIX)) {
-                String trackerKey = key.substring(RequestProperties.TRACKER_PREFIX.length());
-                setTrackerAttribute(trackerKey, value);
-            }
-        }
-    }
-
-    /**
      * Clear all OpenTelemetry context from MDC.
      * This should be called at the end of HTTP request processing.
      * Note: Process contexts are managed separately via clearProcessContexts(processInstanceId).
@@ -218,7 +186,6 @@ public class OtelContextHolder {
     public static void clearProcessContexts(String processInstanceId) {
         if (processInstanceId != null) {
             processStartContexts.remove(processInstanceId);
-            processCompletionContexts.remove(processInstanceId);
             rootContexts.remove(processInstanceId);
         }
     }
@@ -237,23 +204,6 @@ public class OtelContextHolder {
 
     public static void clearProcessStartContext(String processInstanceId) {
         processStartContexts.remove(processInstanceId);
-    }
-
-    public static void setProcessCompletionContext(String processInstanceId, long durationMs, String outcome) {
-        if (processInstanceId != null) {
-            processCompletionContexts.put(processInstanceId,
-                    new TimestampedValue<>(new ProcessCompletionContext(durationMs, outcome), LocalDateTime.now()));
-            enforceMaxSize();
-        }
-    }
-
-    public static ProcessCompletionContext getProcessCompletionContext(String processInstanceId) {
-        TimestampedValue<ProcessCompletionContext> timestamped = processCompletionContexts.get(processInstanceId);
-        return timestamped != null ? timestamped.value() : null;
-    }
-
-    public static void clearProcessCompletionContext(String processInstanceId) {
-        processCompletionContexts.remove(processInstanceId);
     }
 
     /**
@@ -292,7 +242,6 @@ public class OtelContextHolder {
 
     public static void enforceMaxSize() {
         enforceMapMaxSize(processStartContexts, "start");
-        enforceMapMaxSize(processCompletionContexts, "completion");
         enforceMapMaxSize(rootContexts, "root");
     }
 
