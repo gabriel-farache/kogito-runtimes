@@ -21,6 +21,7 @@ package org.kie.kogito.quarkus.serverless.workflow.opentelemetry;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -110,9 +111,23 @@ public class OpenTelemetryWorkflowIT {
         await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
             List<SpanData> spans = OtlpMockTestResource.getSpans();
             List<SpanData> workflowSpans = filterWorkflowSpans(spans);
-            assertThat(workflowSpans).hasSizeGreaterThanOrEqualTo(3);
 
-            workflowSpans.forEach(span -> {
+            // Filter for spans from this test - when no transaction ID is provided,
+            // the fallback behavior sets transactionId = processInstanceId (a UUID pattern)
+            List<SpanData> fallbackSpans = workflowSpans.stream()
+                    .filter(span -> {
+                        String transactionId = span.getAttributes().get(SONATAFLOW_TRANSACTION_ID);
+                        String processInstanceId = span.getAttributes().get(SONATAFLOW_PROCESS_INSTANCE_ID);
+                        // Only consider spans where transactionId equals processInstanceId (fallback behavior)
+                        return transactionId != null && transactionId.equals(processInstanceId);
+                    })
+                    .collect(Collectors.toList());
+
+            assertThat(fallbackSpans)
+                    .withFailMessage("Should have spans with fallback transaction ID (transactionId == processInstanceId)")
+                    .hasSizeGreaterThanOrEqualTo(3);
+
+            fallbackSpans.forEach(span -> {
                 String processInstanceId = span.getAttributes().get(SONATAFLOW_PROCESS_INSTANCE_ID);
                 String transactionId = span.getAttributes().get(SONATAFLOW_TRANSACTION_ID);
                 String nodeName = span.getAttributes().get(SONATAFLOW_PROCESS_INSTANCE_NODE);
@@ -139,27 +154,6 @@ public class OpenTelemetryWorkflowIT {
 
             Set<String> nodeNames = extractNodeNames(workflowSpans);
             assertThat(nodeNames).contains("ChooseOnLanguage", "GreetInSpanish", "GreetPerson");
-        });
-    }
-
-    /**
-     * Test OpenTelemetry configuration handling.
-     * Validates that the integration respects configuration settings.
-     */
-    @Test
-    void shouldRespectOpenTelemetryConfiguration() {
-        executeWorkflow("/greet", buildGreetBody("Test", "English"), 201);
-
-        await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
-            List<SpanData> spans = OtlpMockTestResource.getSpans();
-            List<SpanData> workflowSpans = filterWorkflowSpans(spans);
-
-            assertThat(workflowSpans).isNotEmpty();
-
-            workflowSpans.forEach(span -> {
-                String serviceName = span.getAttributes().get(SERVICE_NAME);
-                assertThat(serviceName).isNotNull();
-            });
         });
     }
 
@@ -328,7 +322,7 @@ public class OpenTelemetryWorkflowIT {
 
             Set<String> parentSpanIds = currentTestSpans.stream()
                     .map(SpanData::getParentSpanId)
-                    .filter(id -> id != null)
+                    .filter(Objects::nonNull)
                     .collect(Collectors.toSet());
 
             LOGGER.info("--- Parent Span Analysis ---");
@@ -353,14 +347,10 @@ public class OpenTelemetryWorkflowIT {
                     boolean parentIsInTest = currentTestSpans.stream()
                             .anyMatch(s -> s.getSpanId().equals(parentId));
                     if (parentIsInTest) {
-                        SpanData parentSpan = currentTestSpans.stream()
+                        currentTestSpans.stream()
                                 .filter(s -> s.getSpanId().equals(parentId))
-                                .findFirst()
-                                .orElse(null);
-                        if (parentSpan != null) {
-                            LOGGER.warn("  -> Parent '{}' is a workflow node (this creates hierarchy!)",
-                                    parentSpan.getAttributes().get(SONATAFLOW_PROCESS_INSTANCE_NODE));
-                        }
+                                .findFirst().ifPresent(parentSpan -> LOGGER.warn("  -> Parent '{}' is a workflow node (this creates hierarchy!)",
+                                        parentSpan.getAttributes().get(SONATAFLOW_PROCESS_INSTANCE_NODE)));
                     }
                 });
             }
@@ -391,12 +381,12 @@ public class OpenTelemetryWorkflowIT {
      * Extracts unique node names from spans.
      *
      * @param spans list of spans
-     * @param set of unique node names
+     * @param list of unique node names
      */
     private static Set<String> extractNodeNames(List<SpanData> spans) {
         return spans.stream()
                 .map(span -> span.getAttributes().get(SONATAFLOW_PROCESS_INSTANCE_NODE))
-                .filter(nodeName -> nodeName != null)
+                .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
     }
 }

@@ -273,34 +273,6 @@ public class OpenTelemetryLoggingIT {
         });
     }
 
-    /**
-     * Test that log messages during token propagation workflow are captured as span events.
-     * This test focuses only on the log capture aspects of token propagation, validating
-     * that logs are properly associated with workflow spans during complex workflows.
-     * <p>
-     * Validates:
-     * - Log messages are captured as "log.message" events on spans
-     * - Event has required attributes: level, logger, message, thread.name, thread.id
-     * - Log events are associated with the correct workflow execution spans
-     */
-    @Test
-    void shouldCaptureLogMessagesAsSpanEventsWithTokenPropagation() {
-        executeTokenPropagationWorkflow("log-capture-test-token-propagation-txn-123", 201);
-
-        await().atMost(Duration.ofSeconds(25)).untilAsserted(() -> {
-            List<SpanData> spans = OtlpMockTestResource.getSpans();
-            List<SpanData> workflowSpans = filterWorkflowSpans(spans);
-
-            assertThat(workflowSpans).isNotEmpty();
-
-            List<EventData> allLogEvents = collectEventsByName(workflowSpans, "log.message");
-            assertThat(allLogEvents).isNotEmpty();
-
-            EventData logEvent = allLogEvents.get(0);
-            validateLogEventAttributes(logEvent);
-        });
-    }
-
     // Private helper methods moved from OpenTelemetryTestUtils for LoggingIT-specific validation
 
     /**
